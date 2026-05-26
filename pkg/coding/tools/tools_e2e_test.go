@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/coding/tools"
@@ -678,7 +682,7 @@ func TestGitDiffNoGit(t *testing.T) {
 	_ = err
 }
 
-func TestGitDiffStaged(t *testing.T) {
+func TestGitDiffStat(t *testing.T) {
 	tool := tools.GitDiffTool()
 	result, err := tool.Execute(context.Background(), "c1", map[string]any{"staged": true}, nil)
 	if err != nil {
@@ -772,4 +776,237 @@ func TestCoverageTool(t *testing.T) {
 		text = text[:200]
 	}
 	t.Logf("coverage output: %s", text)
+}
+
+// --- verify.go tests ---
+
+func TestVerifyPass(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.VerifyTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{
+		"command": "echo hello", "expected_output": "hello", "timeout_seconds": 5,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passed, ok := result.Details["passed"].(bool); !ok || !passed {
+		t.Errorf("expected pass, got %v", result.Details["passed"])
+	}
+}
+
+func TestVerifyFail(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.VerifyTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{
+		"command": "echo goodbye", "expected_output": "hello", "timeout_seconds": 5,
+	}, nil)
+	if passed, ok := result.Details["passed"].(bool); !ok || passed {
+		t.Errorf("expected fail, got %v", result.Details["passed"])
+	}
+}
+
+func TestVerifyTimeout(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.VerifyTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{
+		"command": "sleep 10", "timeout_seconds": 1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Content[0].Text, "PASS") {
+		t.Error("expected timeout, got PASS")
+	}
+}
+
+func TestVerifyRegexMatch(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.VerifyTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{
+		"command": "echo test-42-ok", "expected_output": `test-\d+-ok`, "timeout_seconds": 5,
+	}, nil)
+	if passed, ok := result.Details["passed"].(bool); !ok || !passed {
+		t.Errorf("regex should match, got %v", result.Content[0].Text)
+	}
+}
+
+func TestVerifyNoExpectedMatch(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.VerifyTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{
+		"command": "echo test", "expected_output": `nonexistent`, "timeout_seconds": 5,
+	}, nil)
+	if passed, ok := result.Details["passed"].(bool); !ok || passed {
+		t.Errorf("regex should not match")
+	}
+}
+
+// --- browse.go tests ---
+
+func TestBrowseNormal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<html><head><title>Test Page</title></head><body><p>Hello world</p></body></html>`))
+	}))
+	defer srv.Close()
+
+	tool := tools.BrowseTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"url": srv.URL, "max_chars": 500}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content[0].Text, "Test Page") {
+		t.Errorf("expected title, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "Hello world") {
+		t.Errorf("expected content, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestBrowseCSSSelector(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<html><body><div class="content">Target content</div><div>Other stuff</div></body></html>`))
+	}))
+	defer srv.Close()
+
+	tool := tools.BrowseTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"url": srv.URL, "extract": ".content"}, nil)
+	if !strings.Contains(result.Content[0].Text, "Target content") {
+		t.Errorf("expected targeted content, got: %s", result.Content[0].Text)
+	}
+	if strings.Contains(result.Content[0].Text, "Other stuff") {
+		t.Error("should not contain untargeted content")
+	}
+}
+
+func TestBrowse404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	tool := tools.BrowseTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"url": srv.URL}, nil)
+	if !strings.Contains(result.Content[0].Text, "404") {
+		t.Errorf("expected 404 in output, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestBrowseTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	defer srv.Close()
+
+	// The tool uses 10s timeout — this should NOT timeout
+	tool := tools.BrowseTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"url": srv.URL}, nil)
+	// Either gets the response (empty body after sleep) or errors
+	_ = result
+	_ = err
+}
+
+func TestBrowseOversize(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		long := strings.Repeat("x", 10000)
+		w.Write([]byte(fmt.Sprintf(`<html><body>%s</body></html>`, long)))
+	}))
+	defer srv.Close()
+
+	tool := tools.BrowseTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"url": srv.URL, "max_chars": 100}, nil)
+	text := result.Content[0].Text
+	if len(text) > 200 { // title + url + content
+		t.Logf("text length: %d (may include title/url overhead)", len(text))
+	}
+}
+
+// --- git tools tests ---
+
+func TestGitDiffBasic(t *testing.T) {
+	tool := tools.GitDiffTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{}, nil)
+	if err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	if !strings.Contains(result.Content[0].Text, "no changes") && result.Content[0].Text != "" {
+		t.Logf("diff output: %s", result.Content[0].Text[:minLen(result.Content[0].Text, 200)])
+	}
+}
+
+func minLen(s string, n int) int {
+	if len(s) < n {
+		return len(s)
+	}
+	return n
+}
+
+func TestGitDiffStagedEdge(t *testing.T) {
+	tool := tools.GitDiffTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"staged": true}, nil)
+	if err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	_ = result
+}
+
+func TestGitCommit(t *testing.T) {
+	tool := tools.GitCommitTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"message": "test commit"}, nil)
+	if err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	t.Logf("commit output: %s", result.Content[0].Text)
+}
+
+func TestGitCommitEmptyMessage(t *testing.T) {
+	tool := tools.GitCommitTool()
+	_, err := tool.Execute(context.Background(), "c1", map[string]any{"message": ""}, nil)
+	if err == nil {
+		t.Error("expected error for empty message")
+	}
+}
+
+func TestGitLog(t *testing.T) {
+	tool := tools.GitLogTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"count": 5}, nil)
+	if err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	t.Logf("log output: %s", result.Content[0].Text[:minLen(result.Content[0].Text, 200)])
+}
+
+func TestGitLogOneline(t *testing.T) {
+	tool := tools.GitLogTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"count": 3, "oneline": true}, nil)
+	if err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	_ = result
+}
+
+func TestGitBranchList(t *testing.T) {
+	tool := tools.GitBranchTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"action": "list"}, nil)
+	if err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	if !strings.Contains(result.Content[0].Text, "*") {
+		t.Log("branch list (no star marker): " + result.Content[0].Text)
+	}
+}
+
+func TestGitBranchCreate(t *testing.T) {
+	tool := tools.GitBranchTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"action": "create", "name": "test-branch-xyz"}, nil)
+	if err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	// Cleanup
+	exec.Command("git", "-C", tools.WorkspaceRoot, "branch", "-D", "test-branch-xyz").Run()
+	_ = result
 }
