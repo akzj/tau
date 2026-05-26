@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/akzj/tau/core"
@@ -76,6 +77,11 @@ func main() {
 	sess.Tools.SetActive([]string{"echo"})
 	sess.Providers.RegisterProvider("default", prov)
 
+	// Initialize memory system for demo
+	memDir, _ := os.MkdirTemp("", "tau-memory-demo-*")
+	defer os.RemoveAll(memDir)
+	sess.Memory = core.NewMemorySystem(memDir, memDir)
+
 	// 4. Multi-turn: Prompt → Continue
 	fmt.Println("=== tau demo: multi-turn echo ===")
 	fmt.Println()
@@ -110,6 +116,17 @@ func main() {
 	}
 	<-run1.Done()
 
+	// Show memory activity
+	if sess.Memory != nil {
+		fmt.Fprintf(os.Stderr, "\n[memory] Working Memory Summary:\n")
+		summary := sess.Memory.Working.Summarize()
+		for _, line := range strings.Split(summary, "\n") {
+			fmt.Fprintf(os.Stderr, "[memory]   %s\n", line)
+		}
+		fmt.Fprintf(os.Stderr, "[memory] Stats — Working: %d obs, Episodic: %d episodes\n",
+			sess.Memory.Working.Len(), sess.Memory.Episodic.Len())
+	}
+
 	// --- Turn 2: Continue (send tool results back to LLM) ---
 	fmt.Println()
 	fmt.Println("--- Turn 2: Continue ---")
@@ -138,6 +155,17 @@ func main() {
 		}
 	}
 	<-run2.Done()
+
+	// Show memory activity after turn 2
+	if sess.Memory != nil {
+		fmt.Fprintf(os.Stderr, "\n[memory] Working Memory Summary:\n")
+		summary := sess.Memory.Working.Summarize()
+		for _, line := range strings.Split(summary, "\n") {
+			fmt.Fprintf(os.Stderr, "[memory]   %s\n", line)
+		}
+		fmt.Fprintf(os.Stderr, "[memory] Stats — Working: %d obs, Episodic: %d episodes\n",
+			sess.Memory.Working.Len(), sess.Memory.Episodic.Len())
+	}
 
 	fmt.Println()
 	fmt.Println("=== done ===")
