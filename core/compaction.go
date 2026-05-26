@@ -54,5 +54,6 @@ func MaybeCompact(sess *Session, cfg CompactionConfig) bool {
 
 	// Replace truncated messages with summary
 	sess.Transcript.Compact(result.Summary, Position(firstKept))
+	sess.Summary = result.Summary
 	return true
 }

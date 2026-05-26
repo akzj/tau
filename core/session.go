@@ -48,6 +48,7 @@ type Session struct {
 	followUpQueue []FollowUpEntry // pending follow-up questions
 	ActiveTools   []string        // if non-empty, only these tools are sent to LLM
 	EventBus      *EventBus       // event subscription system
+	Summary       string          // carries compaction summary between turns
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
