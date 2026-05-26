@@ -39,6 +39,7 @@ func main() {
 	listTools := flag.Bool("list-tools", false, "List available tools")
 	listSkills := flag.Bool("list-skills", false, "List available skills")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
+	yesFlag := flag.Bool("yes", false, "Auto-confirm all dangerous tool operations (TAU_YES env also supported)")
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "Log format: text, json")
 	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
@@ -90,6 +91,7 @@ func main() {
 	_ = *sandboxNetwork
 	_ = *maxTokens
 	_ = *ctxStrategy
+	_ = *yesFlag
 
 	core.InitLogger(*logLevel, *logFormat)
 

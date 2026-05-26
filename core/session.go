@@ -63,6 +63,7 @@ type Session struct {
 	Store         *SessionStore       // persistent store
 	CreatedAt     time.Time           // session creation time
 	Memory        *MemorySystem       // 3-layer memory system (nil = disabled)
+	YesMode       bool                // --yes mode (skip all confirmation)
 	ctx           context.Context
 	cancel        context.CancelFunc
 }

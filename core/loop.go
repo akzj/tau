@@ -419,6 +419,13 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 							results[idx] = toolResult{tc.CallID, tc.ToolName, result, err}
 						} else {
 							// Fallback: single-stage Tool.Execute
+							// Confirmation gate for dangerous tools
+							if IsDangerous(tool.Name) && !r.sess.YesMode && !isTerminal() {
+								results[idx] = toolResult{tc.CallID, tc.ToolName, ToolResult{
+									Content: []Content{{Type: "text", Text: "[SKIPPED — dangerous tool in non-interactive mode, use --yes]"}},
+								}, nil}
+								return
+							}
 							var params any
 							raw := json.RawMessage(tc.Args)
 							if tool.PrepareArgs != nil {
