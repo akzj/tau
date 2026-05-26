@@ -109,30 +109,16 @@ type VendorConfig struct {
 
 // ProviderRegistry is scoped to a Session (NOT package-level).
 type ProviderRegistry struct {
-	vendors   map[string]VendorConfig // name → config
-	defaults  map[WireAPI]string      // wire → default vendor name
-	providers map[string]Provider     // name → Provider instance
+	vendors  map[string]VendorConfig // name → config
+	defaults map[WireAPI]string      // wire → default vendor name
 }
 
 // NewProviderRegistry creates an empty ProviderRegistry.
 func NewProviderRegistry() *ProviderRegistry {
 	return &ProviderRegistry{
-		vendors:   make(map[string]VendorConfig),
-		defaults:  make(map[WireAPI]string),
-		providers: make(map[string]Provider),
+		vendors:  make(map[string]VendorConfig),
+		defaults: make(map[WireAPI]string),
 	}
-}
-
-// RegisterProvider registers a pre-constructed Provider by name.
-// This is the simple path for demo; RegisterVendor+wire dispatch is Phase 5+.
-func (r *ProviderRegistry) RegisterProvider(name string, p Provider) {
-	r.providers[name] = p
-}
-
-// Get returns a Provider by name.
-func (r *ProviderRegistry) Get(name string) (Provider, bool) {
-	p, ok := r.providers[name]
-	return p, ok
 }
 
 // RegisterVendor registers a vendor. Single user-facing entry point (form B).

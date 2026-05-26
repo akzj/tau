@@ -58,18 +58,6 @@ func (s *Session) Context() context.Context {
 	return s.ctx
 }
 
-// ResolveProvider returns the active provider. Checks direct Provider field first,
-// then falls back to ProviderRegistry.Get("default").
-func (s *Session) ResolveProvider() (Provider, error) {
-	if s.Provider != nil {
-		return s.Provider, nil
-	}
-	if p, ok := s.Providers.Get("default"); ok {
-		return p, nil
-	}
-	return nil, fmt.Errorf("no provider configured")
-}
-
 // generateID creates a simple unique ID (demo quality).
 func generateID() string {
 	return fmt.Sprintf("sess-%d", time.Now().UnixNano())

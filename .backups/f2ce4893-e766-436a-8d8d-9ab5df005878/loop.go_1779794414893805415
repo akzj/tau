@@ -89,11 +89,7 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	}
 
 	// 4. Call provider
-	p, err := sess.ResolveProvider()
-	if err != nil {
-		return nil, err
-	}
-	provEvents, err := p.Stream(ctx, req)
+	provEvents, err := sess.Provider.Stream(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("provider stream: %w", err)
 	}
@@ -153,11 +149,7 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 	}
 
 	// 4. Call provider
-	p, err := sess.ResolveProvider()
-	if err != nil {
-		return nil, err
-	}
-	provEvents, err := p.Stream(ctx, req)
+	provEvents, err := sess.Provider.Stream(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("provider stream: %w", err)
 	}

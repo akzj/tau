@@ -70,7 +70,6 @@ func main() {
 		},
 	})
 	sess.Tools.SetActive([]string{"echo"})
-	sess.Providers.RegisterProvider("default", prov)
 
 	// 4. Multi-turn: Prompt → Continue
 	fmt.Println("=== tau demo: multi-turn echo ===")
