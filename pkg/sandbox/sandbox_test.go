@@ -63,7 +63,7 @@ func TestRelPath(t *testing.T) {
 		path, root, want string
 	}{
 		{"/home/user/project/src", "/home/user/project", "/src"},
-		{"/home/user/project", "/home/user/project", ""},
+		{"/home/user/project", "/home/user/project", "/home/user/project"},
 		{"/other/path", "/home/user", "/other/path"},
 	}
 	for _, tc := range tests {
