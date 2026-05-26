@@ -1,6 +1,9 @@
 package core
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // WireAPI is a sealed string type for wire protocol dispatch.
 type WireAPI string
@@ -52,6 +55,10 @@ type StreamRequest struct {
 	OnPayload func(payload any) (any, error)
 	// OnResponse is a per-request response hook.
 	OnResponse func(statusCode int, headers map[string][]string)
+	// MaxRetries is the max retry attempts for transient errors (429, 503, network).
+	MaxRetries int // 0 = no retry
+	// RetryDelay is the base delay between retries (doubles each attempt).
+	RetryDelay time.Duration
 }
 
 // CompleteRequest for non-streaming completion.

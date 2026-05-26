@@ -116,7 +116,37 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
-	provEvents, err := p.Stream(ctx, req)
+	var provEvents <-chan ProviderEvent
+	var lastErr error
+	maxRetries := req.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		provEvents, lastErr = p.Stream(ctx, req)
+		if lastErr == nil {
+			break
+		}
+		if attempt < maxRetries {
+			errStr := lastErr.Error()
+			if !strings.Contains(errStr, "429") && !strings.Contains(errStr, "503") &&
+				!strings.Contains(errStr, "timeout") && !strings.Contains(errStr, "connection") {
+				break
+			}
+			delay := req.RetryDelay * time.Duration(1<<uint(attempt))
+			if delay <= 0 {
+				delay = time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+	if provEvents == nil {
+		return nil, fmt.Errorf("provider stream (after %d retries): %w", maxRetries, lastErr)
+	}
 	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
 	if err != nil {
 		return nil, fmt.Errorf("provider stream: %w", err)
@@ -187,7 +217,37 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
-	provEvents, err := p.Stream(ctx, req)
+	var provEvents <-chan ProviderEvent
+	var lastErr error
+	maxRetries := req.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		provEvents, lastErr = p.Stream(ctx, req)
+		if lastErr == nil {
+			break
+		}
+		if attempt < maxRetries {
+			errStr := lastErr.Error()
+			if !strings.Contains(errStr, "429") && !strings.Contains(errStr, "503") &&
+				!strings.Contains(errStr, "timeout") && !strings.Contains(errStr, "connection") {
+				break
+			}
+			delay := req.RetryDelay * time.Duration(1<<uint(attempt))
+			if delay <= 0 {
+				delay = time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+	if provEvents == nil {
+		return nil, fmt.Errorf("provider stream (after %d retries): %w", maxRetries, lastErr)
+	}
 	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
 	if err != nil {
 		return nil, fmt.Errorf("provider stream: %w", err)
