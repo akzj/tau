@@ -20,6 +20,8 @@ const (
 	ProvThinkingDelta ProviderEventType = "thinking_delta"
 	ProvThinkingEnd   ProviderEventType = "thinking_end"
 	ProvError         ProviderEventType = "error"
+	ProvUsage         ProviderEventType = "usage"
+	ProvRawChunk      ProviderEventType = "raw_chunk"
 )
 
 // ProviderEvent is the raw event produced by a Provider.
@@ -31,6 +33,8 @@ type ProviderEvent struct {
 	ToolName      string
 	ToolArgsDelta string // accumulated JSON fragment
 	Err           error
+	Usage         *Usage `json:"usage,omitempty"` // ADD: token count info
+	Raw           string `json:"raw,omitempty"`   // ADD: raw SSE chunk for debugging
 }
 
 // --- AgentEvent (high-level sealed interface, consumed by product layer) ---

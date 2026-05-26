@@ -548,6 +548,17 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	r.resultMu.Unlock()
 
 	r.sess.EventBus.Emit(Event{Type: EvtTurnEnd, Payload: map[string]string{"reason": string(reason)}})
+
+	// Check ShouldStopAfterTurn hook
+	turnInfo := TurnInfo{TurnNumber: 1, Reason: reason}
+	if r.sess.Hooks.ShouldStopAfterTurn != nil {
+		result, err := r.sess.Hooks.ShouldStopAfterTurn.Run(ctx, turnInfo)
+		if err == nil && result.TokensUsed > 0 {
+			// hook signaled stop — override reason
+			reason = ReasonCancelled
+		}
+	}
+
 	r.events <- TurnEnd{Timestamp_: timeNow(), TurnID: turnID, Reason: string(reason)}
 }
 

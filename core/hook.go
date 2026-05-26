@@ -30,6 +30,7 @@ type HookSet struct {
 	BeforeAgentStart      LastWins[AgentStartRequest] // ADD: fired at turn start
 	AfterToolResult       Chain[ToolResultWithError]  // ADD: fired after each tool execution
 	BeforeSessionTree     LastWins[TreeEntry]         // ADD: fired before tree insertion
+	ShouldStopAfterTurn   LastWins[TurnInfo]          // ADD: check after each turn completes
 }
 
 // ToolCallEvent is passed to BeforeToolCall hooks.
@@ -61,6 +62,13 @@ type AgentStartRequest struct {
 	TurnID string
 	Input  string // user input text (empty for Continue)
 	Turn   int    // 1-based turn number
+}
+
+// TurnInfo is passed to ShouldStopAfterTurn hooks after each turn completes.
+type TurnInfo struct {
+	TurnNumber int
+	Reason     TurnEndReason
+	TokensUsed int
 }
 
 // ToolResultWithError is passed to AfterToolResult hooks after a tool executes.

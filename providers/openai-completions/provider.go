@@ -1,3 +1,4 @@
+//go:build !no_openai
 package openai_completions
 
 import (
@@ -205,6 +206,11 @@ type sseChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCloser, events chan<- core.ProviderEvent) {
@@ -247,6 +253,18 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 		if msgID == "" && chunk.ID != "" {
 			msgID = chunk.ID
 			events <- core.ProviderEvent{Type: core.ProvMessageStart, MessageID: msgID}
+		}
+
+		if chunk.Usage != nil {
+			events <- core.ProviderEvent{
+				Type: core.ProvUsage,
+				Usage: &core.Usage{
+					PromptTokens:     chunk.Usage.PromptTokens,
+					CompletionTokens: chunk.Usage.CompletionTokens,
+					TotalTokens:      chunk.Usage.TotalTokens,
+				},
+			}
+			continue
 		}
 
 		for _, choice := range chunk.Choices {

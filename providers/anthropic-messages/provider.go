@@ -1,3 +1,4 @@
+//go:build !no_anthropic
 package anthropic_messages
 
 import (

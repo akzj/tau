@@ -1,3 +1,4 @@
+//go:build !no_google
 package google_genai
 
 import (
