@@ -44,6 +44,7 @@ func main() {
 	metricsAddr := flag.String("metrics-addr", "", "Metrics listen address (e.g., :9090)")
 	configPath := flag.String("config", "", "Config file path (default: ~/.tau/tau.yaml)")
 	pluginDir := flag.String("plugin-dir", "", "Plugin directory (default: $TAU_PLUGIN_DIR or ~/.tau/plugins)")
+	maxSubAgents := flag.Int("max-sub-agents", 4, "Maximum concurrent sub-agents")
 	flag.Parse()
 
 	// Load config file (flag > env > config > default)
@@ -76,6 +77,8 @@ func main() {
 	if cfg.NoTools {
 		*noTools = true
 	}
+	// maxSubAgents reserved for future SubAgentPool integration
+	_ = *maxSubAgents
 
 	core.InitLogger(*logLevel, *logFormat)
 
