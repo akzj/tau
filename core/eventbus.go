@@ -6,33 +6,49 @@ import "sync"
 type EventType string
 
 const (
-	EvtTurnStart     EventType = "turn:start"
-	EvtTurnEnd       EventType = "turn:end"
-	EvtMessageStart  EventType = "message:start"
-	EvtMessageEnd    EventType = "message:end"
+	// EvtTurnStart fires when a new turn begins.
+	EvtTurnStart EventType = "turn:start"
+	// EvtTurnEnd fires when a turn completes.
+	EvtTurnEnd EventType = "turn:end"
+	// EvtMessageStart fires when an assistant message begins streaming.
+	EvtMessageStart EventType = "message:start"
+	// EvtMessageEnd fires when an assistant message finishes streaming.
+	EvtMessageEnd EventType = "message:end"
+	// EvtToolCallStart fires when a tool call is requested.
 	EvtToolCallStart EventType = "tool:start"
-	EvtToolCallEnd   EventType = "tool:end"
-	EvtCompaction    EventType = "compaction"
-	EvtError         EventType = "error"
-	EvtSessionStart  EventType = "session:start"
-	EvtSessionEnd    EventType = "session:end"
+	// EvtToolCallEnd fires when a tool call completes.
+	EvtToolCallEnd EventType = "tool:end"
+	// EvtCompaction fires after transcript compaction.
+	EvtCompaction EventType = "compaction"
+	// EvtError fires on provider or tool errors.
+	EvtError EventType = "error"
+	// EvtSessionStart fires when a new session is created.
+	EvtSessionStart EventType = "session:start"
+	// EvtSessionEnd fires when a session is closed.
+	EvtSessionEnd EventType = "session:end"
 
-	// Session lifecycle
+	// EvtSessionCompact fires when compaction runs.
 	EvtSessionCompact EventType = "session:compact"
-	EvtSessionFork    EventType = "session:fork"
-	EvtSessionSave    EventType = "session:save"
-	EvtSessionLoad    EventType = "session:load"
+	// EvtSessionFork fires when a session is forked.
+	EvtSessionFork EventType = "session:fork"
+	// EvtSessionSave fires when a session is persisted.
+	EvtSessionSave EventType = "session:save"
+	// EvtSessionLoad fires when a session is loaded from disk.
+	EvtSessionLoad EventType = "session:load"
 
-	// Tool phases
-	EvtToolPrepare  EventType = "tool:prepare"
+	// EvtToolPrepare fires before a tool's Prepare phase.
+	EvtToolPrepare EventType = "tool:prepare"
+	// EvtToolFinalize fires after a tool's Finalize phase.
 	EvtToolFinalize EventType = "tool:finalize"
 
-	// Provider
-	EvtProviderRequest  EventType = "provider:request"
+	// EvtProviderRequest fires before a provider Stream call.
+	EvtProviderRequest EventType = "provider:request"
+	// EvtProviderResponse fires after a provider Stream call returns.
 	EvtProviderResponse EventType = "provider:response"
 
-	// Steer/FollowUp
-	EvtSteerInjected  EventType = "steer:injected"
+	// EvtSteerInjected fires when a steer instruction is consumed.
+	EvtSteerInjected EventType = "steer:injected"
+	// EvtFollowUpRaised fires when a follow-up question is raised.
 	EvtFollowUpRaised EventType = "followup:raised"
 )
 

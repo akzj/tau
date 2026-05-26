@@ -6,11 +6,16 @@ import "time"
 type EntryType string
 
 const (
-	EntryMessage       EntryType = "message"
-	EntryCompaction    EntryType = "compaction"
-	EntryLeaf          EntryType = "leaf"
+	// EntryMessage is a transcript message entry.
+	EntryMessage EntryType = "message"
+	// EntryCompaction is a compaction summary entry.
+	EntryCompaction EntryType = "compaction"
+	// EntryLeaf is a leaf node in the session tree.
+	EntryLeaf EntryType = "leaf"
+	// EntryBranchSummary is a branch summary entry.
 	EntryBranchSummary EntryType = "branch_summary"
-	EntrySessionInfo   EntryType = "session_info"
+	// EntrySessionInfo is a session metadata entry.
+	EntrySessionInfo EntryType = "session_info"
 )
 
 // TreeEntry is a node in the session tree. See also HookSet.BeforeSessionTree.
