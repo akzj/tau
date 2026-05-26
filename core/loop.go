@@ -111,6 +111,15 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		systemPrompt = sp
 	}
 
+	// Memory: inject working memory summary into system prompt
+	if sess.Memory != nil {
+		sess.Memory.AddObservation("user", input.Text, 0.9)
+		summary := sess.Memory.Working.Summarize()
+		if summary != "" && summary != "(empty)" {
+			systemPrompt += "\n\n[Working Memory]\n" + summary
+		}
+	}
+
 	// 3. Build tool specs from active tools
 	var toolSpecs []ToolSpec
 	for _, t := range sess.Tools.Active() {
@@ -198,6 +207,14 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 			return nil, fmt.Errorf("system prompt: %w", err)
 		}
 		systemPrompt = sp
+	}
+
+	// Memory: inject working memory summary
+	if sess.Memory != nil {
+		summary := sess.Memory.Working.Summarize()
+		if summary != "" && summary != "(empty)" {
+			systemPrompt += "\n\n[Working Memory]\n" + summary
+		}
 	}
 
 	// 2. Build tool specs from active tools
@@ -590,8 +607,9 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 }
 
 type toolCallAccum struct {
-	name    string
-	argsBuf strings.Builder
+	name          string
+	argsBuf       strings.Builder
+	memoryContext string // episodic memory context
 }
 
 func generateMsgID() string {
@@ -603,6 +621,17 @@ func timeNow() time.Time {
 }
 
 // resultText extracts a text representation from a ToolResult.
+func formatEpisodes(eps []Episode) string {
+	if len(eps) == 0 {
+		return ""
+	}
+	var lines []string
+	for _, ep := range eps {
+		lines = append(lines, fmt.Sprintf("- %s → %s (lesson: %s)", ep.Trigger, ep.Outcome, ep.Lesson))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func resultText(result ToolResult) string {
 	for _, c := range result.Content {
 		if c.Type == "text" {

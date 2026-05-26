@@ -21,6 +21,7 @@ type SessionOptions struct {
 	DefaultModel ModelSpec       // default model for Loop turns
 	MaxTokens    int             // token budget (default 128000)
 	CtxStrategy  ContextStrategy // context management strategy (default "sliding")
+	MemoryDir    string          // directory for memory persistence (empty = disabled)
 }
 
 // SteerEntry is a pending steer instruction.
@@ -61,6 +62,7 @@ type Session struct {
 	CallCount     int                 // number of LLM calls
 	Store         *SessionStore       // persistent store
 	CreatedAt     time.Time           // session creation time
+	Memory        *MemorySystem       // 3-layer memory system (nil = disabled)
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
@@ -94,6 +96,9 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	}
 	s.Conversation = NewConversation(s.MaxTokens, s.CtxStrategy)
 	s.CreatedAt = time.Now()
+	if opts.MemoryDir != "" {
+		s.Memory = NewMemorySystem(opts.MemoryDir, opts.MemoryDir)
+	}
 	return s, nil
 }
 
