@@ -5,6 +5,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -20,11 +21,53 @@ type line struct {
 	Details map[string]any // structured tool result details
 }
 
+// FileStatus tracks the state of a file in the workspace.
+type FileStatus string
+
+const (
+	FileRead     FileStatus = "read"
+	FileCreated  FileStatus = "created"
+	FileModified FileStatus = "modified"
+)
+
+// FileTree tracks file operations during a session.
+type FileTree struct {
+	files map[string]FileStatus // path → status
+}
+
+// NewFileTree creates an empty FileTree.
+func NewFileTree() *FileTree {
+	return &FileTree{files: make(map[string]FileStatus)}
+}
+
+// Mark records a file operation. Modified overwrites read; created overwrites modified.
+func (ft *FileTree) Mark(path string, status FileStatus) {
+	if existing, ok := ft.files[path]; ok {
+		if existing == FileCreated {
+			return
+		}
+		if existing == FileModified && status == FileRead {
+			return
+		}
+	}
+	ft.files[path] = status
+}
+
+// List returns a copy of the file tree.
+func (ft *FileTree) List() map[string]FileStatus {
+	out := make(map[string]FileStatus, len(ft.files))
+	for k, v := range ft.files {
+		out[k] = v
+	}
+	return out
+}
+
 // toolState tracks an in-flight tool call.
 type toolState struct {
 	Name   string
-	Status string // "running", "done"
+	Status string          // "running", "done"
 	Result string
+	Args   json.RawMessage // captured from ToolCallStart
 }
 
 // model is the Bubble Tea model for the TUI.
@@ -44,6 +87,8 @@ type model struct {
 	initialPrompt string // if non-empty, auto-submit on start
 	turnCount     int    // number of completed turns
 	activeTools   []string // current active tool set
+	fileTree      *FileTree // file operations in this session
+	showFiles     bool      // Ctrl+T toggle: show file tree sidebar
 }
 
 // turnCompleteMsg signals the turn loop finished.
@@ -75,6 +120,8 @@ func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string) 
 		status:        status,
 		agentChan:     make(chan any, 64),
 		initialPrompt: initialPrompt,
+		fileTree:      NewFileTree(),
+		showFiles:     false,
 	}
 }
 

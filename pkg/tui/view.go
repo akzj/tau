@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -84,7 +85,14 @@ func (m *model) View() string {
 	// Panel 3: Input field.
 	inputLine := "> " + m.input.View()
 
-	return strings.Join(msgLines, "\n") + "\n" + statusBar + "\n" + inputLine
+	view := strings.Join(msgLines, "\n") + "\n" + statusBar + "\n" + inputLine
+
+	// Overlay file tree sidebar when toggled.
+	if m.showFiles {
+		view = m.overlayFileTree(view)
+	}
+
+	return view
 }
 
 func prefixFor(role string) string {
@@ -119,6 +127,98 @@ func styleFor(role string) lipgloss.Style {
 	default:
 		return lipgloss.NewStyle()
 	}
+}
+
+// overlayFileTree renders the file tree sidebar on the right side of the main view.
+func (m *model) overlayFileTree(mainView string) string {
+	tree := m.renderFileTree()
+	if tree == "" {
+		return mainView
+	}
+
+	panelW := 24 // right panel width
+	mainLines := strings.Split(mainView, "\n")
+	treeLines := strings.Split(tree, "\n")
+
+	var result []string
+	maxH := len(mainLines)
+	if len(treeLines) > maxH {
+		maxH = len(treeLines)
+	}
+
+	for i := 0; i < maxH; i++ {
+		left := ""
+		if i < len(mainLines) {
+			left = mainLines[i]
+		}
+		right := ""
+		if i < len(treeLines) {
+			right = treeLines[i]
+		}
+		result = append(result, padRight(left, m.width-panelW)+right)
+	}
+	return strings.Join(result, "\n")
+}
+
+// renderFileTree builds the file tree panel string.
+func (m *model) renderFileTree() string {
+	files := m.fileTree.List()
+	if len(files) == 0 {
+		return ""
+	}
+
+	var paths []string
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	var b strings.Builder
+	b.WriteString("┌ Files ──────────┐\n")
+
+	// Show last 8 files (fit in panel).
+	visible := paths
+	if len(visible) > 8 {
+		visible = visible[len(visible)-8:]
+	}
+
+	for _, p := range visible {
+		status := files[p]
+		icon := " "
+		switch status {
+		case FileCreated:
+			icon = "●"
+		case FileModified:
+			icon = "○"
+		case FileRead:
+			icon = "·"
+		}
+		display := icon + " " + shortenPath(p, 17)
+		b.WriteString(display + "\n")
+	}
+
+	// Fill remaining lines.
+	for i := len(visible); i < 8; i++ {
+		b.WriteString("\n")
+	}
+	b.WriteString("└─────────────────┘")
+	return b.String()
+}
+
+// padRight pads s to length n with spaces.
+func padRight(s string, n int) string {
+	if len(s) >= n {
+		return s[:n]
+	}
+	return s + strings.Repeat(" ", n-len(s))
+}
+
+// shortenPath truncates a path to fit max chars, keeping the tail.
+func shortenPath(p string, max int) string {
+	if len(p) <= max {
+		return p
+	}
+	return "…" + p[len(p)-max+3:]
 }
 
 func truncateView(s string, max int) string {

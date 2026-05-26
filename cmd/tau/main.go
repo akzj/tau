@@ -34,6 +34,7 @@ func main() {
 	listSessions := flag.Bool("list-sessions", false, "List saved sessions")
 	listModels := flag.Bool("list-models", false, "List available models")
 	listTools := flag.Bool("list-tools", false, "List available tools")
+	listSkills := flag.Bool("list-skills", false, "List available skills")
 	flag.Parse()
 
 	// Resolve workspace
@@ -55,7 +56,7 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools {
+	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools && !*listSkills {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -67,6 +68,19 @@ func main() {
 		fmt.Println("Available tools:")
 		for _, t := range toolNames {
 			fmt.Printf("  %s\n", t)
+		}
+		return
+	}
+
+	// --list-skills: print available skills and exit
+	if *listSkills {
+		builtins := []string{
+			"code-review", "debugger", "test-writer", "refactor", "architect",
+			"go-refactor", "shell-scripting", "git-workflow",
+		}
+		fmt.Println("Available skills (built-in):")
+		for _, s := range builtins {
+			fmt.Printf("  %s\n", s)
 		}
 		return
 	}

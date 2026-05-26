@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -44,6 +45,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				lines = append(lines, fmt.Sprintf("%s (%s) %d ctx", info.ID, info.Provider, info.ContextWindow))
 			}
 			m.messages = append(m.messages, line{Role: "system", Content: "Models:\n" + strings.Join(lines, "\n")})
+			return m, nil
+
+		case "ctrl+t":
+			m.showFiles = !m.showFiles
 			return m, nil
 
 		case "enter":
@@ -110,7 +115,7 @@ func (m *model) handleAgentEvent(ev core.AgentEvent) tea.Cmd {
 		}
 
 	case core.ToolCallStart:
-		m.tools[e.CallID] = toolState{Name: e.ToolName, Status: "running"}
+		m.tools[e.CallID] = toolState{Name: e.ToolName, Status: "running", Args: e.Args}
 
 	case core.ToolCallEnd:
 		ts := m.tools[e.CallID]
@@ -123,6 +128,18 @@ func (m *model) handleAgentEvent(ev core.AgentEvent) tea.Cmd {
 		}
 		m.tools[e.CallID] = ts
 		m.messages = append(m.messages, line{Role: "tool", Content: "  [" + ts.Name + "] → " + truncate(ts.Result, 200)})
+
+		// Update file tree from tool result.
+		if path, ok := extractPath(ts.Name, ts.Args, ts.Result); ok {
+			switch ts.Name {
+			case "read":
+				m.fileTree.Mark(path, FileRead)
+			case "write":
+				m.fileTree.Mark(path, FileCreated)
+			case "edit":
+				m.fileTree.Mark(path, FileModified)
+			}
+		}
 
 	case core.TurnStart:
 		m.status = "streaming"
@@ -216,6 +233,39 @@ func (m *model) drainRun(ctx context.Context, run *core.Run) {
 			return
 		}
 	}
+}
+
+// extractPath extracts a file path from tool call args and result text.
+func extractPath(toolName string, args json.RawMessage, result string) (string, bool) {
+	switch toolName {
+	case "read":
+		var a struct{ FilePath string `json:"file_path"` }
+		if json.Unmarshal(args, &a) == nil && a.FilePath != "" {
+			return a.FilePath, true
+		}
+	case "write":
+		// "Wrote N bytes to <path>" or "Wrote N bytes to <path> (overwritten)"
+		if after := afterLast(result, " to "); after != "" {
+			path := strings.TrimSuffix(after, " (overwritten)")
+			path = strings.TrimSuffix(path, " (empty — file cleared)")
+			return path, true
+		}
+	case "edit":
+		// "Replaced N occurrence(s) in <path>"
+		if after := afterLast(result, " in "); after != "" {
+			return after, true
+		}
+	}
+	return "", false
+}
+
+// afterLast returns the substring after the last occurrence of sep.
+func afterLast(s, sep string) string {
+	idx := strings.LastIndex(s, sep)
+	if idx < 0 {
+		return ""
+	}
+	return s[idx+len(sep):]
 }
 
 // truncate shortens s to maxLen characters, appending "…" if needed.

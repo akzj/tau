@@ -21,8 +21,8 @@ type Loader struct {
 	dirs []string
 }
 
-// NewLoader creates a skill loader for the given directories.
-// Dirs are searched in order; later dirs override earlier by name.
+// NewLoader creates a skill loader for the given directories, searched in order
+// with later directories overriding earlier by name.
 func NewLoader(dirs []string) *Loader {
 	return &Loader{dirs: dirs}
 }
@@ -64,16 +64,7 @@ func (l *Loader) Load() ([]Skill, error) {
 	return result, nil
 }
 
-// parseSkillFile extracts frontmatter + content from SKILL.md files.
-// Format:
-//
-//	---
-//	name: "rust-refactor"
-//	description: "Rust refactoring"
-//	disable-model-invocation: false
-//	---
-//	## Guidelines
-//	...
+// parseSkillFile extracts frontmatter and body content from Markdown skill files.
 func parseSkillFile(content, path string) Skill {
 	s := Skill{SourcePath: path}
 

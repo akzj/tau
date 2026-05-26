@@ -93,10 +93,7 @@ type DynamicInput struct {
 	WorkingFiles string
 }
 
-// RenderPrompt renders a prompt template, supporting both pi-style ($1/$@/$ARGUMENTS)
-// and Go text/template syntax. Auto-detection: if the template contains pi variables,
-// pi-style substitution is used. Otherwise, the template is returned unchanged for
-// text/template rendering by the caller.
+// RenderPrompt renders a template with auto-detection of pi-style ($1/$@) vs text/template syntax.
 func RenderPrompt(tmpl string, args []string) string {
 	if piVarPattern.MatchString(tmpl) {
 		return renderPiStyle(tmpl, args)
@@ -104,10 +101,7 @@ func RenderPrompt(tmpl string, args []string) string {
 	return tmpl
 }
 
-// renderPiStyle substitutes pi-style variables.
-// $1, $2, ... → positional arguments
-// $@ → all arguments joined by space
-// $ARGUMENTS → alias for $@
+// renderPiStyle substitutes $1, $2, ..., $@, and $ARGUMENTS in a prompt template.
 func renderPiStyle(tmpl string, args []string) string {
 	result := strings.ReplaceAll(tmpl, "$@", strings.Join(args, " "))
 	result = strings.ReplaceAll(result, "$ARGUMENTS", strings.Join(args, " "))
