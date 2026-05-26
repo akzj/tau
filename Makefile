@@ -1,4 +1,4 @@
-.PHONY: build test bench vet lint run docker clean all
+.PHONY: build test bench vet lint run docker clean all test-integration
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME ?= $(shell date -u '+%Y-%m-%d_%H:%M:%S')
@@ -20,6 +20,10 @@ bench:
 # Run go vet
 vet:
 	go vet ./...
+
+# Run live integration tests (requires env vars)
+test-integration:
+	go test -tags=integration -count=1 -v ./internal/providers/live/
 
 # Build and run
 run: build
