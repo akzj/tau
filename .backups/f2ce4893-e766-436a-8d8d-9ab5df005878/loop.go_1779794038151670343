@@ -209,11 +209,10 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	r.events <- TurnStart{Timestamp_: timeNow(), TurnID: turnID}
 
 	var (
-		currentMsgID       string
-		contentBuf         strings.Builder
-		toolCallBuf        = make(map[string]*toolCallAccum)
-		pendingToolCalls   []ToolCallRequest
-		pendingToolResults []Message // buffered until assistant msg is appended
+		currentMsgID     string
+		contentBuf       strings.Builder
+		toolCallBuf      = make(map[string]*toolCallAccum)
+		pendingToolCalls []ToolCallRequest
 	)
 
 	for pe := range provEvents {
@@ -235,7 +234,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 		case ProvMessageEnd:
 			r.events <- MessageEnd{Timestamp_: timeNow(), MessageID: currentMsgID}
-			// Append assistant message FIRST (OpenAI requires assistant before tool results)
+			// Append assistant message to transcript
 			assistantMsg := Message{
 				Role:      RoleAssistant,
 				Content:   contentBuf.String(),
@@ -243,11 +242,6 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 				ToolCalls: pendingToolCalls,
 			}
 			r.sess.Transcript.Append(assistantMsg)
-			// THEN append tool results
-			for _, tr := range pendingToolResults {
-				r.sess.Transcript.Append(tr)
-			}
-			pendingToolResults = nil
 
 		case ProvToolCallStart:
 			if _, ok := toolCallBuf[pe.ToolCallID]; !ok {
@@ -301,14 +295,14 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 					CallID:     pe.ToolCallID,
 					Result:     result,
 				}
-				// Buffer tool result — flush after assistant message (OpenAI requires ordering)
+				// Append tool result to transcript
 				toolMsg := Message{
 					Role:       RoleTool,
 					ToolCallID: pe.ToolCallID,
 					Content:    resultText(result),
 					MessageID:  generateMsgID(),
 				}
-				pendingToolResults = append(pendingToolResults, toolMsg)
+				r.sess.Transcript.Append(toolMsg)
 			}
 
 		case ProvError:
@@ -322,14 +316,6 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	if len(pendingToolCalls) > 0 {
 		reason = ReasonToolCalls
 	}
-
-	// Store result
-	r.resultMu.Lock()
-	r.result.TurnCount = 1
-	if contentBuf.Len() > 0 {
-		r.result.FinalMsg = contentBuf.String()
-	}
-	r.resultMu.Unlock()
 
 	r.events <- TurnEnd{Timestamp_: timeNow(), TurnID: turnID, Reason: string(reason)}
 }
