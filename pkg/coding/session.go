@@ -90,9 +90,60 @@ func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSe
 		}
 
 		// Destructive tools: bash/write/edit — log and allow for now
-		// In interactive mode, this would prompt the user for confirmation.
-		// The hook preserves the event but could reject by returning an error.
 		fmt.Fprintf(os.Stderr, "  [gate] allowing %s\n", ev.ToolName)
+		return ev, nil
+	})
+
+	// BeforeCompaction: summarise old messages when transcript gets too large
+	cs.Hooks.BeforeCompaction = core.NewLastWins[core.CompactionRequest]()
+	cs.Hooks.BeforeCompaction.Set(func(ctx context.Context, req core.CompactionRequest) (*core.CompactionRequest, error) {
+		oldMsgs := cs.Transcript.Slice(0, req.FirstKeptEntryID)
+
+		var parts []string
+		for _, m := range oldMsgs {
+			prefix := string(m.Role)
+			content := m.Content
+			if len(content) > 500 {
+				content = content[:500] + "..."
+			}
+			parts = append(parts, prefix+": "+content)
+		}
+		promptText := "Summarize this conversation history in 2-3 sentences:\n\n" + strings.Join(parts, "\n")
+
+		// Include file ops hint for richer context
+		if len(req.FileOpsHint) > 0 {
+			promptText += "\n\nRecent file operations:\n" + strings.Join(req.FileOpsHint, "\n")
+		}
+
+		p, err := cs.ResolveProvider()
+		if err != nil {
+			return &req, nil
+		}
+
+		resp, err := p.Complete(ctx, core.CompleteRequest{
+			Model:    cs.DefaultModel,
+			Messages: []core.Message{{Role: core.RoleUser, Content: promptText}},
+		})
+		if err != nil {
+			return &req, nil
+		}
+
+		req.Summary = resp.Content
+		return &req, nil
+	})
+
+	// BeforeAgentStart: log turn start
+	cs.Hooks.BeforeAgentStart = core.NewLastWins[core.AgentStartRequest]()
+	cs.Hooks.BeforeAgentStart.Observe(func(ctx context.Context, req core.AgentStartRequest) {
+		fmt.Fprintf(os.Stderr, "  [turn %d] %s\n", req.Turn, req.Input)
+	})
+
+	// AfterToolResult: log tool completion
+	cs.Hooks.AfterToolResult = core.NewChain[core.ToolResultWithError]()
+	cs.Hooks.AfterToolResult.Add(func(ctx context.Context, ev core.ToolResultWithError) (core.ToolResultWithError, error) {
+		if ev.Err != nil {
+			fmt.Fprintf(os.Stderr, "  [tool error] %s: %v\n", ev.CallID, ev.Err)
+		}
 		return ev, nil
 	})
 

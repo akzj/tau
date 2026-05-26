@@ -53,6 +53,7 @@ type CompactionRequest struct {
 	Summary          string   // handler fills this with the summarization result
 	FirstKeptEntryID Position // first message ID to keep after compaction
 	TokensBefore     int      // estimated token count before compaction
+	FileOpsHint      []string // recent file operations (format: "action:path")
 }
 
 // AgentStartRequest is passed to BeforeAgentStart hooks when a Loop run begins.

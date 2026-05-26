@@ -1,5 +1,7 @@
 package core
 
+import "strings"
+
 // CompactionConfig holds settings for automatic compaction.
 type CompactionConfig struct {
 	TokenThreshold int // trigger when estimated tokens exceed this
@@ -40,10 +42,28 @@ func MaybeCompact(sess *Session, cfg CompactionConfig) bool {
 
 	firstKept := len(msgs) - cfg.KeepRecent
 
+	// Extract file ops for compaction context
+	var fileOps []string
+	seen := make(map[string]bool)
+	for _, m := range msgs[:firstKept] {
+		for _, tc := range m.ToolCalls {
+			path := extractPath(tc.Args)
+			if path == "" {
+				continue
+			}
+			key := tc.ToolName + ":" + path
+			if !seen[key] {
+				seen[key] = true
+				fileOps = append(fileOps, key)
+			}
+		}
+	}
+
 	req := CompactionRequest{
 		Summary:          "",
 		FirstKeptEntryID: Position(firstKept),
 		TokensBefore:     EstimateTokens(msgs[:firstKept]),
+		FileOpsHint:      fileOps,
 	}
 
 	// Run the hook — product-layer handler fills in req.Summary via Provider.Complete()
@@ -56,4 +76,21 @@ func MaybeCompact(sess *Session, cfg CompactionConfig) bool {
 	sess.Transcript.Compact(result.Summary, Position(firstKept))
 	sess.Summary = result.Summary
 	return true
+}
+
+// extractPath extracts a file path from tool call args JSON.
+func extractPath(argsJSON string) string {
+	for _, key := range []string{`"file_path"`, `"path"`} {
+		idx := strings.Index(argsJSON, key)
+		if idx >= 0 {
+			rest := argsJSON[idx+len(key):]
+			// Skip :" or : "
+			rest = strings.TrimLeft(rest, `: "`)
+			end := strings.IndexAny(rest, `",}`)
+			if end > 0 {
+				return rest[:end]
+			}
+		}
+	}
+	return ""
 }
