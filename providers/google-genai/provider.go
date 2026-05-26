@@ -301,15 +301,14 @@ func buildContents(msgs []core.Message) []map[string]any {
 
 // classifyHTTPError returns a descriptive error based on HTTP status code.
 func classifyHTTPError(statusCode int, body []byte) error {
+	msg := string(body)
 	switch {
-	case statusCode == 429:
-		return fmt.Errorf("rate limited (429): %s", string(body))
+	case statusCode == 429 || statusCode >= 500:
+		return core.Transient("genai.Stream", fmt.Errorf("%d: %s", statusCode, msg))
 	case statusCode == 401 || statusCode == 403:
-		return fmt.Errorf("auth error (%d): %s", statusCode, string(body))
-	case statusCode >= 500:
-		return fmt.Errorf("server error (%d): %s", statusCode, string(body))
+		return core.Permanent("genai.Stream", fmt.Errorf("auth: %d: %s", statusCode, msg))
 	default:
-		return fmt.Errorf("API error %d: %s", statusCode, string(body))
+		return core.Permanent("genai.Stream", fmt.Errorf("%d: %s", statusCode, msg))
 	}
 }
 

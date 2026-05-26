@@ -364,16 +364,13 @@ if err := scanner.Err(); err != nil {
 // classifyError produces structured error messages for HTTP errors.
 func classifyError(statusCode int, body []byte) error {
 	msg := string(body)
-	if statusCode == 429 {
-		return fmt.Errorf("rate limited (429): %s", msg)
-	}
-	if statusCode >= 500 {
-		return fmt.Errorf("server error (%d): %s", statusCode, msg)
+	if statusCode == 429 || statusCode >= 500 {
+		return core.Transient("openai.Stream", fmt.Errorf("%d: %s", statusCode, msg))
 	}
 	if statusCode == 401 || statusCode == 403 {
-		return fmt.Errorf("auth error (%d): %s", statusCode, msg)
+		return core.Permanent("openai.Stream", fmt.Errorf("auth: %d: %s", statusCode, msg))
 	}
-	return fmt.Errorf("API error %d: %s", statusCode, msg)
+	return core.Permanent("openai.Stream", fmt.Errorf("%d: %s", statusCode, msg))
 }
 
 // --- message building ---

@@ -1,6 +1,10 @@
 package core
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"runtime"
+)
 
 // ErrorCode identifies the subsystem that produced the error.
 type ErrorCode string
@@ -46,4 +50,113 @@ func (e *TauError) Error() string {
 // Unwrap returns the wrapped cause error.
 func (e *TauError) Unwrap() error {
 	return e.Cause
+}
+
+// --- Kind-based error system ---
+
+// ErrorKind classifies the nature of an error for retry/dispatch decisions.
+type ErrorKind int
+
+const (
+	// KindTransient indicates a retryable error (429, timeout, connection).
+	KindTransient ErrorKind = iota
+	// KindPermanent indicates a non-retryable error (400, 401, validation).
+	KindPermanent
+	// KindUsage indicates a user error (wrong args, not found).
+	KindUsage
+)
+
+// Error is a structured error with kind, operation, and file:line capture.
+type Error struct {
+	Kind ErrorKind
+	Op   string // operation name (e.g., "openai.Stream", "loop.Prompt")
+	Err  error  // underlying error
+	File string // auto-captured source file
+	Line int    // auto-captured source line
+}
+
+// Error implements the error interface with file:line context.
+func (e *Error) Error() string {
+	if e.Op != "" {
+		return fmt.Sprintf("%s:%d %s: %v", e.File, e.Line, e.Op, e.Err)
+	}
+	return e.Err.Error()
+}
+
+// Unwrap implements errors.Unwrap for Is/As compatibility.
+func (e *Error) Unwrap() error { return e.Err }
+
+// NewError creates a structured error with auto file:line capture.
+func NewError(op string, kind ErrorKind, err error) *Error {
+	_, file, line, _ := runtime.Caller(1)
+	if idx := stringsLastIndex(file, "/"); idx >= 0 {
+		file = file[idx+1:]
+	}
+	return &Error{Kind: kind, Op: op, Err: err, File: file, Line: line}
+}
+
+// Wrap wraps an existing error with operation context, preserving kind.
+func Wrap(op string, err error) *Error {
+	kind := KindOf(err)
+	return NewError(op, kind, err)
+}
+
+// Cause returns the root cause by unwrapping all Error wrappers.
+func Cause(err error) error {
+	for {
+		var e *Error
+		if errors.As(err, &e) {
+			err = e.Err
+		} else {
+			return err
+		}
+	}
+}
+
+// IsKind checks if any error in the chain has the given kind.
+func IsKind(err error, kind ErrorKind) bool {
+	for {
+		var e *Error
+		if errors.As(err, &e) {
+			if e.Kind == kind {
+				return true
+			}
+			err = e.Err
+		} else {
+			return false
+		}
+	}
+}
+
+// KindOf returns the ErrorKind of the first structured Error in the chain, or KindPermanent.
+func KindOf(err error) ErrorKind {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Kind
+	}
+	return KindPermanent
+}
+
+// Transient wraps an error as a transient (retryable) error.
+func Transient(op string, err error) *Error {
+	return NewError(op, KindTransient, err)
+}
+
+// Permanent wraps an error as a permanent (non-retryable) error.
+func Permanent(op string, err error) *Error {
+	return NewError(op, KindPermanent, err)
+}
+
+// UsageError wraps an error as a user/usage error.
+func UsageError(op string, err error) *Error {
+	return NewError(op, KindUsage, err)
+}
+
+func stringsLastIndex(s, sep string) int {
+	for i := len(s) - len(sep); i >= 0; i-- {
+		if s[i:i+len(sep)] == sep {
+			return i
+		}
+	}
+	return -1
 }

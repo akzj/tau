@@ -1,0 +1,6 @@
+name: hello-plugin
+version: 0.1.0
+description: Example tau plugin — says hello
+author: tau
+license: MIT
+entrypoint: ./hello-plugin

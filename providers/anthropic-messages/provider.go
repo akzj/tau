@@ -74,7 +74,11 @@ func (p *AnthropicMessagesProvider) Stream(ctx context.Context, req core.StreamR
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		msg := string(bodyBytes)
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			return nil, core.Transient("anthropic.Stream", fmt.Errorf("%d: %s", resp.StatusCode, msg))
+		}
+		return nil, core.Permanent("anthropic.Stream", fmt.Errorf("%d: %s", resp.StatusCode, msg))
 	}
 
 	events := make(chan core.ProviderEvent, 64)

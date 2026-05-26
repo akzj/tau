@@ -89,24 +89,7 @@ func Retry[T any](ctx context.Context, cfg RetryConfig, fn func(context.Context)
 	return zero, fmt.Errorf("retry exhausted after %d attempts: %w", cfg.MaxRetries+1, lastErr)
 }
 
-// isTransient returns true if the error is retryable.
+// isTransient returns true if the error is retryable (KindTransient).
 func isTransient(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return containsAny(s, "429", "503", "timeout", "connection reset", "EOF", "broken pipe", "connection refused")
-}
-
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if len(sub) > 0 && len(s) >= len(sub) {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return IsKind(err, KindTransient)
 }

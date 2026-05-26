@@ -13,7 +13,7 @@ func TestRetrySuccess(t *testing.T) {
 	result, err := Retry(context.Background(), cfg, func(ctx context.Context) (int, error) {
 		attempts++
 		if attempts < 2 {
-			return 0, errors.New("503 Service Unavailable")
+			return 0, Transient("test", errors.New("503 Service Unavailable"))
 		}
 		return 42, nil
 	})
@@ -31,7 +31,7 @@ func TestRetrySuccess(t *testing.T) {
 func TestRetryMaxExceeded(t *testing.T) {
 	cfg := RetryConfig{MaxRetries: 2, InitialDelay: 1 * time.Millisecond}
 	_, err := Retry(context.Background(), cfg, func(ctx context.Context) (int, error) {
-		return 0, errors.New("503 Service Unavailable")
+		return 0, Transient("test", errors.New("503 Service Unavailable"))
 	})
 	if err == nil {
 		t.Error("expected error after exhausting retries")
@@ -48,7 +48,7 @@ func TestRetryContextCancel(t *testing.T) {
 	}()
 
 	_, err := Retry(ctx, cfg, func(ctx context.Context) (int, error) {
-		return 0, errors.New("503 Service Unavailable")
+		return 0, Transient("test", errors.New("503 Service Unavailable"))
 	})
 	if err == nil {
 		t.Error("expected context cancellation error")
@@ -75,7 +75,7 @@ func TestRetryJitter(t *testing.T) {
 	attempts := 0
 	_, _ = Retry(context.Background(), cfg, func(ctx context.Context) (int, error) {
 		attempts++
-		return 0, errors.New("503")
+		return 0, Transient("test", errors.New("503"))
 	})
 	if attempts != 2 {
 		t.Errorf("expected 2 attempts, got %d", attempts)
