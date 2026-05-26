@@ -1,0 +1,607 @@
+# Phase 2 — Tau 核心设计稿（v1.0）
+
+> **范围**：tau 核心两层（agent core + provider 抽象），Go。**不含产品层本体，含产品层接入点。**
+> **基线约束**：[`phase1-to-phase2-handoff.md`](./phase1-to-phase2-handoff.md) §1 C1-C10
+> **拆出文件**：[naming-map](./phase2-naming-map.md) / [self-doubt](./phase2-self-doubt.md) / [rule-enforcement](./phase2-rule-enforcement.md) / [grey-resolutions](./phase2-grey-resolutions.md)
+> **反 anchoring 自约束**：内部抽象禁用 pi 类名；先正向第一性原理写 → 再用 C1-C10 cross-check；命名映射事后挂载。
+
+---
+
+## §1 — Tau 是什么（定位段）
+
+**Tau is** 一个 Go 写的 **agent 运行内核 + provider 抽象**，提供 LLM agent 的最小可控运行时：会话状态、消息流、工具调用、provider 流式生产。它把 LLM 编排的"骨"做扎实，不替使用者决定"肉"长什么样。
+
+**Tau is not**：pi 的 Go 移植 / "全家桶 framework"（无 prompt 模板库、vector store、chain DSL）/ 产品（coding-agent/TUI/webui 是 Phase 5+ 在 tau 之上独立设计）。
+
+**5 条核心断言**：
+1. **类型即真相**：Go 类型签名 = 运行时合同。`interface{}` / `any` / 类型断言抹泛型一律 lint 拦截。
+2. **流是函数不是对象**：Provider 是 StreamFunc，输入 (ctx, model, opts) 输出 event 流，无 stateful client。
+3. **会话是边界**：所有 mutable 状态绑 Session，禁包级 mutable。
+4. **核心层无产品知识**：core 包内禁具体 provider 名（"Claude"/"GPT"）和 tool 名。
+5. **每条红线挂 lint**：无自动化检查的红线视为不存在——CI 才是承诺。
+
+**divergence-from-pi**：(a) pi `packages/agent` import `packages/ai` 默认共生；tau 强解耦，agent core 只依赖 `Provider` interface，可不引入 anthropic/openai 依赖被 vendor。(b) pi `Agent` 与 `AgentHarness` 同包同抽象层双类（D1 #1）；tau 只一个 `Loop`。
+
+---
+
+## §2 — 核心抽象（Go 类型签名级）
+
+> **关键纪律**：只写 type / interface / func 签名。**不写函数体**。每个抽象后挂"今天它解决什么问题"。
+> **范围限定**：所有签名是**初稿**，§4 B9 决策可能影响 §2.6 / §2.7 字段类型；其他抽象不受 B9 影响。
+
+### §2.1 Loop（agent 主循环）
+
+```go
+package core
+
+// Loop drives one agent turn cycle: prompt → provider → tool calls → continue.
+// Loop is stateless; all state lives on Session.
+type Loop interface {
+    // Prompt starts a new turn with the given user input.
+    // Returns a Run handle the caller uses to consume events and await completion.
+    Prompt(ctx context.Context, sess *Session, input UserInput) (*Run, error)
+
+    // Continue resumes after a tool batch completed; called by the runtime,
+    // not directly by product layer.
+    Continue(ctx context.Context, sess *Session) (*Run, error)
+}
+
+// Run represents a single in-flight turn (or chain of turns through tool calls).
+type Run struct {
+    // Events is the high-level semantic event stream (product layer consumes this).
+    Events <-chan AgentEvent
+    // Done returns the final result; safe to call multiple times.
+    Done func() (RunResult, error)
+    // Cancel aborts this run; honored cooperatively by tools and providers.
+    Cancel func()
+}
+```
+
+**关键设计**：
+- **Loop 无字段**（C6+C1）：状态全在 Session，Loop 只是跑函数。
+- **`Run.Events` 是高层语义事件**（MessageStart/ToolCallStart/TurnEnd），不是 raw provider tokens（双层 stream，A2 #2）。
+- **`Run.Cancel` 是协作式**（A1 §3）：触发 ctx done，tool/provider 自己 honor，in-flight execute 不被强切。
+
+**divergence-from-pi**：pi 4 入口（prompt/continue/steer/followUp）→ tau 2 入口（Prompt + 内部 Continue）；steer/followUp 推迟到 Phase 5+ 验证（A2 #4）。pi Agent 既是入口又是状态；tau 状态在 Session、入口在 Loop——一个抽象一个职责。
+
+---
+
+### §2.2 Session（会话状态容器）
+
+```go
+package core
+
+// Session is the unit of isolation. All mutable state lives here.
+// One product-layer "user session" = one *Session.
+// Multiple sessions in one process MUST NOT share mutable state (C1 / R4).
+type Session struct {
+    ID         SessionID
+    Transcript *Transcript      // §2.3, single source of truth
+    Tools      *ToolRegistry    // §2.6, scoped to this session
+    Providers  *ProviderRegistry // §2.4, scoped to this session
+    Hooks      *HookSet         // §2.8
+    SystemPrompt SystemPromptFn // function, NOT mutable string
+    // Per-session context (cancel scope, deadline, values).
+    ctx context.Context
+    cancel context.CancelFunc
+}
+
+// SystemPromptFn is computed at prompt-time, not stored as mutable string.
+// This kills the "state.systemPrompt = X" mutable field anti-pattern (A2 takeaway #7).
+type SystemPromptFn func(sess *Session) (string, error)
+
+// NewSession is the only way to create a Session.
+// There is no package-level `DefaultSession` or `GlobalSession` (R4).
+func NewSession(ctx context.Context, opts SessionOptions) (*Session, error)
+```
+
+**关键设计**：
+- **多 session 并发安全**（C1/R4，webui 硬要求）：Session 是 mutable 状态边界，跨 session 共享必须显式 copy 或 immutable 引用；所有 registry 都是 Session 字段不是包级单例。
+- **`SystemPrompt` 是 function 不是 string**（A2 #7 + A1 §4）：避免 `agent.state.systemPrompt = X` 突变模式，动态需求用 closure 读外部状态。
+- **`ctx` 嵌进 Session**：每次 Loop 调用 derive 子 ctx，Cancel 只影响 Run，不影响 Session 整体。
+- **Session scope 边界**（W3-lite 差异 E）：
+  - **放**：mutable 状态容器（Transcript / 3 Registry / HookSet）、隔离边界（ctx + cancel）、per-turn 纯函数（SystemPromptFn）
+  - **不放**：Loop 行为参数（推 `LoopOptions`）、Provider 参数（推 `ProviderOptions`）、产品层显示偏好、跨 session immutable 引用（推包级 var）
+  - **判据**：字段进 Session 必须是"per-session mutable state"——否则推走
+
+**divergence-from-pi**：pi Agent 把 Session 隐没在 `agent.state` 里（messages/tools/systemPrompt 平铺）；tau 提成一等抽象。
+
+---
+
+### §2.3 Transcript（消息流单一真相）
+
+```go
+package core
+
+// Transcript is the authoritative message log. Loop does NOT maintain
+// an internal mirror (C6).
+type Transcript struct {
+    // implementation hidden; access via methods only
+}
+
+// Append adds messages atomically. Returns the new tail position.
+func (t *Transcript) Append(msgs ...Message) (Position, error)
+
+// Slice reads messages at [from, to). Negative `to` means "tail".
+// Returns a snapshot — caller may not mutate.
+func (t *Transcript) Slice(from, to Position) []Message
+
+// Subscribe returns a channel of new messages from `cursor` forward.
+// Multiple subscribers see the same events. Closing returned cancel
+// detaches subscriber.
+func (t *Transcript) Subscribe(cursor Position) (<-chan Message, func())
+
+// Position is a monotonically increasing index into the transcript.
+type Position int64
+```
+
+**关键设计**：
+- **Loop 不维护内部 mirror**（C6）：上轮 transcript 从 Transcript 读，不从缓存读，反 pi `loop-internal-mirror-is-invisible-exhaust`。
+- **Subscribe 是接入点**（§5.3）：TUI 实时渲染 / webui WebSocket 推送都通过此接口，与 Loop 解耦。
+- **Slice 返回 snapshot**：Append 期间 Slice 不阻塞；多读者通过 Position 版本号协调。
+
+**divergence-from-pi**：pi `agent.state.messages` 是直接 mutable array；tau 给方法门面禁直接 mutate。
+
+---
+
+### §2.4 Provider（流式生产者）
+
+```go
+package core
+
+// Provider is a pure function: (ctx, model, ctx-data, opts) → event stream.
+// NOT a stateful client object (C10).
+type Provider interface {
+    // Stream is the primary interface. Returns event stream.
+    // ProviderEvents are RAW provider-level events (token deltas, tool call
+    // chunks); Loop transforms these into AgentEvents.
+    Stream(ctx context.Context, req StreamRequest) (<-chan ProviderEvent, error)
+
+    // Complete is one-shot non-streaming completion.
+    // Used for compaction / summarization tasks that don't need the full loop
+    // (A2 takeaway: completeSimple is a real access point).
+    Complete(ctx context.Context, req CompleteRequest) (CompleteResponse, error)
+}
+
+// StreamRequest carries everything Provider needs. NO product-specific fields (C7).
+type StreamRequest struct {
+    Model    ModelSpec
+    Messages []Message
+    Tools    []ToolSpec       // tool schemas only; not the executor (C7)
+    Options  ProviderOptions  // temperature, max_tokens, etc.
+    // Hook for caller-injected per-request transforms. The provider
+    // does NOT know specific tool names; transforms come from caller (C7).
+    TransformToolName func(string) string  // optional, default = identity
+}
+
+// ProviderRegistry is scoped to a Session (R4 / C1).
+// There is NO package-level provider registry.
+type ProviderRegistry struct{ /* ... */ }
+
+func (r *ProviderRegistry) Register(name string, p Provider) error
+func (r *ProviderRegistry) Get(name string) (Provider, bool)
+```
+
+**关键设计**：
+- **C10/C7/C1 三联落地**：函数式生产者无 client 生命周期；不带产品名/tool 名（特殊化通过调用方注入 `TransformToolName`，反 pi `anthropic.ts:69-89` 硬编码 17 个 Claude Code 工具名）；ProviderRegistry 是 Session 字段非包级 var。
+- **`Stream` 返回 raw `ProviderEvent`**（不是高层 `AgentEvent`）：双层 stream 分层（A2 takeaway #2），Loop 内部消费 raw、对外暴露语义事件。
+- **`Complete` 单独入口**（A2：compaction / summarization 用），不强制走 Loop。
+- **OAuth 是实现细节**，不是子类型 interface（注册时绑定 token source 即可）。
+
+**divergence-from-pi**：pi 的 `streamSimple/completeSimple` 是包级函数（违反 R4）；tau 是 Session-scoped 实例方法。
+
+**W3-lite 差异 A 对照说明**：3 家 Go SDK 库都用 iterator/callback 而非 channel。tau 选 channel 是 **harness 层有意识取舍**——channel 是 Go 唯一原生多源融合原语，Loop 需要在同一 select 融合 provider/tool/cancel 三源；SDK 消费者是用户（泄漏责任用户担），harness 消费者是 Loop（泄漏责任已封装）。
+
+---
+
+### §2.5 AgentEvent（高层事件）
+
+```go
+package core
+
+// AgentEvent is the high-level semantic event stream consumed by product layer.
+// Distinct from ProviderEvent (raw, internal-only).
+type AgentEvent interface {
+    eventMarker()  // sealed interface
+    Timestamp() time.Time
+}
+
+// Concrete event types (sealed; product layer pattern-matches on type).
+type (
+    MessageStart    struct{ MessageID string; Role Role }
+    MessageDelta    struct{ MessageID string; ContentDelta string }
+    MessageEnd      struct{ MessageID string }
+    ToolCallStart   struct{ CallID, ToolName string; Args json.RawMessage }
+    ToolCallUpdate  struct{ CallID string; Partial PartialResult }
+    ToolCallEnd     struct{ CallID string; Result ToolResult }
+    TurnStart       struct{ TurnID string }
+    TurnEnd         struct{ TurnID string; Reason TurnEndReason }
+    ErrorEvent      struct{ Err error; Code ErrorCode }
+)
+```
+
+**关键设计**：
+- **Sealed interface**（`eventMarker()` 私有方法）：产品层 type-switch 编译器保证 exhaustive；新增事件类型必须改核心包 = 强制 design review（C2/R6）。
+- **不暴露 raw `ProviderEvent`**（A2 #3 缩边界）：token delta 在 Loop 内部消费，对外只发已合并的 `MessageDelta`。
+- **`ToolCallUpdate` 异步队列**（A1 §3）：partial 与 final 间 ordering 不保证 strictly real-time，产品层需自排序——caveat 见 §5.3。
+
+**divergence-from-pi**：pi `AssistantMessageEvent` 同时承担 raw + 产品层订阅；tau 强制双层分离。
+
+---
+
+### §2.6 Tool（统一工具抽象）
+
+> **G2 灰色已撤销**（A1 §5 判据）：AgentTool/ToolDefinition 不是真冗余 —— 跨包、抽象层不同、字段正交、wrapper 单向丢信息。tau 沿用此分层，但**核心层只暴露一层 Tool**，产品层若需 UI/prompt 字段自行扩展并提供 wrapper。
+
+```go
+package core
+
+// Tool is the canonical tool abstraction (C4: single canonical).
+// Product layer may wrap this with additional fields (UI render, prompt
+// snippets); core does not know about those.
+type Tool struct {
+    Name        string                          // LLM-visible identifier
+    Description string                          // LLM-visible description
+    Schema      ToolSchema                      // §2.7; defines params shape
+    Execute     ToolExecuteFn                   // see below
+    PrepareArgs func(raw json.RawMessage) (any, error)  // optional pre-validate normalization (A1 §1: prepareArguments)
+    Mode        ExecutionMode                   // Sequential | Parallel; per-tool override
+}
+
+// ToolExecuteFn signature is the contract.
+// IMPORTANT (A1 §3): onUpdate is a SYNCHRONOUS CALLBACK, not a channel.
+// Channels here would complicate cancel/close protocol; the synchronous
+// callback model from pi is correct and we keep it (this is a Go-instinct
+// trap: channels feel natural for "stream of partials" but they're wrong here).
+type ToolExecuteFn func(
+    ctx        context.Context,           // honors cancellation cooperatively (not strict abort)
+    callID     string,                    // ties to LLM tool call ID
+    params     any,                       // post-validate, post-prepare typed value
+    onUpdate   func(PartialResult),       // optional partial emit; loop fans out async (A1 §3)
+) (ToolResult, error)                     // error path: return err; loop wraps as isError result (A1 §3)
+
+// ToolResult is the canonical tool output.
+type ToolResult struct {
+    Content   []Content              // text / image
+    Details   any                    // free-form, opaque to core
+    Terminate bool                   // hint; entire batch must terminate=true for actual stop (A1 §3)
+}
+
+// ToolRegistry is Session-scoped (R4 / C1).
+type ToolRegistry struct{ /* ... */ }
+
+func (r *ToolRegistry) Register(t Tool) error
+func (r *ToolRegistry) Get(name string) (Tool, bool)
+func (r *ToolRegistry) Active() []Tool          // filtered by current active set
+func (r *ToolRegistry) SetActive(names []string)
+```
+
+**关键设计**：
+- **C4 落地**：核心层一个 Tool 抽象。产品层定义自己的 ToolDefinition 含 UI/prompt 字段，通过 wrapper 单向降级到 Tool（A1 §5：wrapper 单向丢信息，无 ID 守恒）。
+- **C7 落地**：Tool.Execute 不接收"产品 context"参数；产品层需 ctx 通过 closure 注入。
+- **`onUpdate` 是回调函数不是 channel**（反 Go 直觉陷阱，A1 §3）。Channel 代价**结构性**（close 协议 / buffer 决策 / 与 ctx 协调 / 消费者额外 goroutine）；callback 代价**场景性**（同步阻塞 / 无 backpressure），tool partial 频率 ≤10/s（工程估算）不踩痛点。**软契约**（W3-lite 差异 C）：onUpdate 是 best-effort，工具不调用也合法，Loop 不依赖。Phase 5+ 高频 partial 场景（≥100/s）出现回头重审。
+- **error 走 `return err`**（A1 §3）：禁编码进 result.Content。**terminate 是 hint**，全批 terminate 才停。**元数据全 struct 字段**（A1 §4）：线性查找 O(n) 在 ≤50 tool 时无优化必要。
+
+**divergence-from-pi**：pi wrapper `tool.parameters as any` 抹泛型（A1 §5 小血迹）。Go 等价危险 = `interface{}` + 类型断言 + 泛型擦除。R1 落地禁此模式：跨抽象边界传 schema 必须显式转换。
+
+---
+
+### §2.7 ToolSchema（B9 决策：schema-first codegen）
+
+```go
+package core
+
+// ToolSchema 单一来源（C9）：schema.json → go generate → typed Go struct + Marshal/Validate helpers。
+// 三联职责：Go-side typed param / LLM-emitted JSON Schema / runtime validate。
+// §4 PoC 实测：codegen 唯一通过 adversarial 测试（含 oneOf + const discriminator）。
+type ToolSchema interface {
+    Marshal() (json.RawMessage, error)        // → LLM 的 JSON Schema
+    Validate(raw json.RawMessage) (any, error) // ← LLM 返回 JSON 校验+解码
+}
+```
+
+实际 API 形态等 Phase 4 PRODUCE 阶段实际 codegen 后定型；本节签名是契约层。
+
+> **范围边界**：具体 codegen 输出形态（生成的 Go 代码模板 / Marshal / Validate 实际签名 / sum-type helper 形态）属于 **Phase 4 PRODUCE 定型范围**，**不在 Phase 3 audit 范围内**。Phase 3 不应纠结于此节具体 API。
+
+---
+
+### §2.8 Hook（生命周期挂钩）
+
+> C5 强约束：last-wins 与 chain 必须**命名 + 类型签名都不同**。pi 反例：`emitHook` 内部按"是否有 receiver"暗分语义。
+
+> **决策路径**：v0.5 双 interface → v0.6 折叠尝试 → v0.7 回滚双 interface（trade-off 重审发现"折叠简化"是假象——需新增 errcheck lint 才安全等价）。完整演化见 `phase2-self-doubt.md` #8。**编译期拦截 > runtime invariant + lint 兜底**。
+
+```go
+package core
+
+// Two distinct hook semantics, two distinct interfaces.
+// Calling convention encodes the semantics; impossible to confuse statically.
+
+// Chain: 多 handler 链式调用，每个 handler 可 transform 值。
+// 用于 transformContext / beforeToolCall / afterToolCall。
+type Chain[T any] interface {
+    Add(handler func(context.Context, T) (T, error))
+    Run(ctx context.Context, init T) (T, error)
+}
+
+// LastWins: 至多 1 个 handler 决定最终值；其他是只读 observer。
+// 用于 beforeProviderRequest / system prompt override。
+type LastWins[T any] interface {
+    Set(handler func(context.Context, T) (*T, error))   // 唯一 owner；重复 Set → panic
+    Observe(handler func(context.Context, T))           // 多个 observer；不能 mutate
+    Run(ctx context.Context, init T) (T, error)
+}
+
+// HookSet bundles all hooks for a Session.
+type HookSet struct {
+    BeforeProviderRequest LastWins[StreamRequest]
+    TransformContext      Chain[[]Message]
+    BeforeToolCall        Chain[ToolCallEvent]   // A2 takeaway #1
+    AfterToolCall         Chain[ToolResultEvent] // A2 takeaway #1
+}
+```
+
+**关键设计**：
+- **C5 字面落地**：调用方误把 last-wins handler 注册到 chain（`.Add()`）**编译期报错**（LastWins 没 Add 方法），IDE 即时提示。两个**完全不同的 generic interface**，非同一 interface 双模式。
+- **重复 Set → panic 不返回 error**（panic-fast，元原则 P2）：Hook 注册在 program init 阶段（参考 `regexp.MustCompile` / `sync.Once`），重复 = 配置 bug 不是 runtime error，panic-fast 让错在启动 1 秒内暴露而非 production 第 N 请求。
+- HookSet 字段**只列已有产品层驱动场景**（A2 11 接入点映射的 BeforeToolCall / AfterToolCall）。
+
+**divergence-from-pi**：pi `emitHook` 与 `emitBeforeProviderRequest` 用同一个 Hook 类按内部状态分语义；tau 拆两个 generic interface，编译期可拦。
+
+---
+
+### §2.9 Skills（推迟到 Phase 5+）
+
+```go
+// Phase 2 不为 Skills 设计 first-class 抽象（G3）。理由：
+//  1. B8 "待验证必抄"——LLM 是否主动 read SKILL.md 无行为数据
+//  2. A2 §A.skills 确认 coding-agent 把 skills 纯通过 system prompt 拼装，pi-agent-core 透明
+//  3. 故核心层只需 SystemPromptFn（§2.2）；Skills 是产品层概念，closure 里读 SKILL.md 拼接
+```
+
+---
+
+## §3 — R1-R6 铁律落地机制
+
+> **C2 强约束**：没有自动化检查的红线视为不存在。
+
+| # | 铁律 | 落地机制 | 类型 | 实施细节 |
+|---|---|---|---|---|
+| **R1** | 类型 = 运行时真相 | (a) `golangci-lint` 启用 `forcetypeassert` + 自定义 analyzer 禁未 ok-check 的 type assertion；(b) 自定义 vet analyzer 禁 `interface{}` / `any` 在公开 API 签名（test 包除外）；(c) 跨抽象边界禁泛型擦除（A1 §5 `as any` 反例对应：Go 里 `tool.Schema.(*concreteSchema)` 这种"我知道它是这个具体类型"必须有 ok 分支） | lint + vet | golangci-lint custom rules in `.golangci.yml`；vet analyzer in `tools/vet/notypeassert/`；CI fail 立即拦截 |
+| **R2** | 单一 canonical 抽象 | (a) 架构 review checkpoint：新增公开 type 必须在 PR 描述里答"这个概念是否已有抽象"；(b) CI grep gate：检测同一概念关键字（grep "Agent" / "Tool" / "Session" 等核心概念）公开 type 数量，>1 报警要求 reviewer justify | review + grep | grep gate in `ci/check_canonical.sh`；review template in `.github/PULL_REQUEST_TEMPLATE.md` |
+| **R3** | 每条红线 lint-enforced | **Meta 元规则**：`docs/v2/red-lines.md` 中每条红线必须挂 `lint-rule:` 字段指向具体 lint/vet/grep 实现；CI 检查文档与 lint config 同步 | doc-lint sync | `ci/check_redline_coverage.sh` parse red-lines.md 比对 `.golangci.yml` + `tools/vet/` + `ci/` 脚本 |
+| **R4** | Registry scoped | (a) 自定义 vet analyzer 禁 package-level mutable map / sync.Map / 任何 mutable global state in `core/`；(b) 强制 `New*Registry()` 工厂模式（grep gate：`var.*Registry.*=` in core 文件 → fail） | vet + grep | analyzer `tools/vet/noglobalmut/`；grep gate in CI |
+| **R5** | 抽象层禁知产品 | CI grep gate：`grep -r '\b(Claude\|GPT\|Anthropic\|OpenAI\|coding-agent\|TUI\|webui)\b' core/` → fail。允许的字符串放白名单（如 spec 文档引用） | CI grep gate | `ci/check_no_product_names.sh`；白名单 `ci/product_name_allowlist.txt` |
+| **R6** | 设计哲学 first-class doc | (a) `docs/v2/PHILOSOPHY.md` 必须存在；(b) 每个 PR 改动核心抽象（`core/` 公开 API）必须更新 PHILOSOPHY.md 或在 PR 描述里 justify "no philosophy change"；(c) CI 检查 PHILOSOPHY.md mtime vs core/ 公开 API 改动 mtime 不能严重落后 | doc gate | `ci/check_philosophy_freshness.sh` |
+
+**风险预警**（R 在 Go 中**无法 lint-enforced** 的情况）：
+- R2 的 "同义概念两个 type 名"在自然语言层面无法 100% 自动化（grep 只能粗筛同名前缀）。**降级为 review checkpoint + grep heuristic 组合**，不算完全自动化。这是已知妥协，不阉割铁律但承认局限。
+- 其他 5 条均有可行的自动化路径。
+
+**所有上述 lint/vet/grep 规则在 Phase 4（PRODUCE docs/v2）阶段必须 PoC 实现至少一条以验证可行性**——否则 R3 自身违反 "lint-enforced"。
+
+---
+
+## §4 — B9 Schema 决策（C9）
+
+> **状态**：B9 PoC 完成（米哈游网关双家实测）。**决策已下：schema-first codegen**。
+
+### PoC 关键发现
+
+PoC 实测：3 方案 × 2 模型 × 2 case = 12 happy-path + 6 adversarial。**Happy-path 三方案等价**（看不出区别）；**adversarial 暴露唯一真差异**：只有 codegen schema (含 oneOf + const discriminator) 在 OpenAI gpt-5.4 上抗住诱导 prompt 保持输出干净；reflect 路线**结构性无法表达 oneOf**。**洞察**：schema 真正杠杆在约束力不在 happy-path。**网关 caveat**：Anthropic 上 oneOf 失效不区分协议/网关问题——见 §4 末尾"决策置信度降级标注"。完整 PoC 报告（含 8 处 caveat 详情）：`/tmp/tau-spike-b9/`（已存）。
+
+### 三方案对照（PoC 实测）
+
+| 方案 | R3 兼容 | R1 同源 | DX (加字段) | 生态 | LLM 抗诱导 | 决策 |
+|---|---|---|---|---|---|---|
+| reflect+jsonschema (`invopop`) | ⚠️ 派生 schema 与 struct 同步，但 union 表达不出来 | ⚠️ enum/required ✅ 但 union 无法 | ✅ 1 处 | ✅ 成熟 | ❌ 无 oneOf → 顺从诱导 | **REJECT** |
+| **schema-first codegen** (`atombender/go-jsonschema`) | ✅ schema 是 source，CI diff 卡 | ✅ 完整 oneOf + const | ⚠️ 1 处 + go generate；union 在 Go 退化 `[]interface{}` | ⚠️ 单库 | ✅ OpenAI 抵抗诱导 | **SELECT** |
+| struct-tag + 手写 validator | ❌ schema 与 tag 易漂移，2 处改 | ⚠️ runtime 强、schema 弱 | ❌ 2 处必漂移 | ✅ 成熟 | ⚠️ 训练先验偶然抵抗 | **REJECT** |
+
+### 决策
+
+**选定方案**：**schema-first codegen**（schema.json 作 source of truth，`go generate` 生成 typed Go struct + Marshal/Validate helpers）
+
+**决策理由**：
+1. **唯一能表达 discriminated union**——reflect 路线结构性短板，struct-tag 是手写漂移。tau 工具协议必出现 union（如 file action 的 create/delete/edit 变体），无 oneOf = 安全降级为训练先验赌博
+2. **LLM 实测唯一通过 adversarial 测试**（OpenAI 抵抗诱导）—— 一票否决项过关
+3. **R3 / R1 双兼容**：schema 是 source，CI 跑 `go generate` diff 卡漂移（R3）；生成代码的 typed `UnmarshalJSON` 强制 enum（R1）
+
+**已知权衡**：
+- DX 比 reflect 多 `go generate` 一步（IDE 集成成熟，cost ≈ 0）
+- atombender/go-jsonschema 把 union 退化为 `[]interface{}`，Go-side 用着别扭
+- → **跟进项（建议非必决）**：tau 自写 ~50 行极小 codegen，只支持 tau 用到的 schema 子集，输出 typed sum-type with type-switch helper。**评估时机**：Phase 4 PRODUCE 或 Phase 5+ 产品层第一次踩 `[]interface{}` 痛点时。先用 atombender 起步
+
+**Reject 理由**：
+- **reflect**：union 表达力**结构性短板**，配置无解。今天起步可用但 union 一上场必须迁移——不如一开始就 codegen
+- **struct-tag**：唯一"改一字段需改两处"，长期必漂移；handoff D3 警告"meta-debt = 没 lint 兜底的纸面规则"，struct-tag 路径正中此坑
+
+### 决策置信度降级标注
+
+PoC 走米哈游网关非官方 API 直连。Anthropic 上 oneOf 失效未区分网关 vs 协议。**Phase 5+ 第一次 Anthropic 产品落地时必须用官方 API + strict mode 二验**；如二验显示 Anthropic 协议层不强制 oneOf，§4 决策不变（OpenAI 已足），但产品层需准备 Anthropic-specific runtime fallback validation。
+
+> ⚠️ **Phase 5+ 触发条件**：第一个真实 Anthropic 用户报告 oneOf-related schema 拒绝时，立刻 ① 在官方 API 直连复测 ② 决定是否需要 Anthropic-specific runtime fallback validation 层。
+
+### §2.7 ToolSchema 跟进
+
+§2.7 ToolSchema interface 与 codegen 兼容：codegen 为每个 tool 生成实现 `ToolSchema` 的具体 type，`Marshal()` 返回内嵌 schema 常量，`Validate()` 用生成的 `UnmarshalJSON`。Phase 4 PRODUCE 阶段实际生成代码后定型最终 API。
+
+---
+
+## §5 — 产品层接入点清单
+
+> **范围红线**：本节 ≤ 全文 20%。每个接入点必须挂 ≥1 个具体驱动场景，禁"将来可能需要"。
+> **来源**：Source 1 = handoff §4 / Source 2 = A2 minimal list（11 接入点）/ Source 3 = webui 多 session 并发（用户决策）
+
+### §5.1 Tool 协议接入点
+
+| 接入点 | 类型签名 | 驱动场景 | 来源 |
+|---|---|---|---|
+| 注册 tool | `Session.Tools.Register(Tool) error` | coding-agent 注册 7 内建 tool（read/bash/edit/write/grep/find/ls，A2 §A.tools） | Source 2 |
+| 切换活动 tool 集 | `Session.Tools.SetActive([]string)` | coding-agent 按对话上下文动态启停 tool（A2 §A `state.tools` mutation） | Source 2 |
+| Pre-execute hook | `Session.Hooks.BeforeToolCall.Add(handler)` | permission gate / audit log（A2 §A `agent.beforeToolCall`） | Source 2 |
+| Post-execute hook | `Session.Hooks.AfterToolCall.Add(handler)` | result rewrite / 安全过滤（A2 §A `agent.afterToolCall`） | Source 2 |
+
+**Caveat**（A1 §3）：`ToolCallUpdate` 事件的 ordering 是异步队列——**partial 与 final 之间可能有 reorder**。产品层若要严格 ordering，订阅 AgentEvent 流并以 `CallID + 自增 seq` 自己排序。
+
+### §5.2 Skills 接入点
+
+| 接入点 | 类型签名 | 驱动场景 | 来源 |
+|---|---|---|---|
+| System prompt 注入 | `SessionOptions.SystemPrompt SystemPromptFn` | coding-agent 在 closure 里 `loadSkills()` + `formatSkillsForPrompt()` 拼到 system prompt | Source 2 (A2 §A.skills) |
+
+**单条**——核心层不需要更多。Skills 是产品层概念（A2 takeaway #6 + G3）。
+
+### §5.3 Event Stream 对外消费
+
+| 接入点 | 类型签名 | 驱动场景 | 来源 |
+|---|---|---|---|
+| 订阅 AgentEvent 流 | `Run.Events <-chan AgentEvent` | TUI 实时渲染 / webui WebSocket 推送（C10 + 双层 stream） | Source 3 |
+| 订阅 Transcript 增量 | `Session.Transcript.Subscribe(cursor) (<-chan Message, cancel)` | webui 多客户端订阅同一 session、TUI 重启后从 cursor 续接 | Source 3 |
+| 等待完成 | `Run.Done() (RunResult, error)` | coding-agent 在批处理脚本里阻塞等结果（A2 §A `prompt(...).result()`） | Source 2 |
+
+### §5.4 多 Session 并发
+
+| 接入点 | 类型签名 | 驱动场景 | 来源 |
+|---|---|---|---|
+| 创建 session | `core.NewSession(ctx, opts) (*Session, error)` | webui 多用户：每用户一个 session，状态完全隔离（C1 / R4） | Source 3 |
+| 取消 session | `Session.Cancel()` | 用户关 webui tab → 该 session ctx done → 所有 in-flight tool/provider 协作退出 | Source 3 |
+
+**关键约束**（R4 落地）：tau 核心包内**没有任何包级 mutable 状态**。两个 session 互不可见；不需要锁；不需要 "切 session" 操作。
+
+### §5.5 Provider 注册
+
+| 接入点 | 类型签名 | 驱动场景 | 来源 |
+|---|---|---|---|
+| 注册 provider | `Session.Providers.Register(name, Provider) error` | coding-agent extension 提供新 provider（A2 §A `registerApiProvider`） | Source 2 |
+| OAuth provider 注册 | `Session.Providers.Register(name, NewOAuthProvider(token source))` | Anthropic OAuth / GitHub Copilot（A2 takeaway #5：OAuth 是真接入点） | Source 2 |
+
+**注意**：OAuth 不是独立 interface，是 Provider 实现细节。`NewOAuthProvider` 是 `core/providers/oauth/` 包的 helper 函数，返回 `Provider`。
+
+### §5.6 单轮 LLM 调用（独立于 Loop）
+
+| 接入点 | 类型签名 | 驱动场景 | 来源 |
+|---|---|---|---|
+| 一次性 complete | `Session.Providers.Get(name).Complete(ctx, req) (CompleteResponse, error)` | compaction / branch summarization 需要绕过主 loop 做单次 LLM 调用（A2 takeaway #5：completeSimple 必备） | Source 2 |
+
+### 最小 demo case（验证接入点合理性）
+
+```go
+// "echo agent + 1 tool + 1 session" — 最小完整循环
+func MinimalAgent(ctx context.Context, openaiKey string) error {
+    sess, err := core.NewSession(ctx, core.SessionOptions{
+        SystemPrompt: func(s *core.Session) (string, error) {
+            return "You are a helper. Use tools when needed.", nil
+        },
+    })
+    if err != nil { return err }
+    defer sess.Cancel()
+
+    // Register provider
+    sess.Providers.Register("openai", openai.NewProvider(openaiKey))
+
+    // Register one tool
+    sess.Tools.Register(core.Tool{
+        Name:        "echo",
+        Description: "Echo back the input string.",
+        Schema:      schema.For[EchoArgs](),  // §2.7-决定后形态
+        Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+            args := params.(EchoArgs)
+            return core.ToolResult{Content: []core.Content{{Text: args.Msg}}}, nil
+        },
+    })
+    sess.Tools.SetActive([]string{"echo"})
+
+    // Run one turn
+    loop := core.NewLoop()
+    run, err := loop.Prompt(ctx, sess, core.UserInput{Text: "echo hello"})
+    if err != nil { return err }
+
+    // Consume events
+    for ev := range run.Events {
+        // product layer renders / forwards
+        _ = ev
+    }
+
+    _, err = run.Done()
+    return err
+}
+```
+
+≤30 行，覆盖 §5.1–§5.5。**写得出来 → 接入点设计 closed-form**。
+
+---
+
+## §6 — G1-G6 灰色地带处理
+
+| # | 灰色地带 | Phase 2 结论 | 推迟到 |
+|---|---|---|---|
+| G1 | message normalization 砍多少（C8 已修正）| **保留同 provider 内归一化（70%/~150 行级），砍跨 provider 切换（30%/~50 行级）**。归一化是 Provider 实现细节，对产品层透明（A2 takeaway #3）。tau 不暴露 `transformMessages` 公共 API | 决策已下 |
+| G2 | AgentTool 双重抽象是真冗余还是分层 | **撤回为 D1 反复反模式实例**——A1 §5 判据：跨包、抽象层不同、字段正交、wrapper 单向丢信息。tau 沿用此分层（核心层 Tool 一层，产品层自由扩展并 wrap） | 决策已下 |
+| G3 | B8 Skills 行为验证 | Phase 2 **不为 Skills 设计 first-class 抽象**（§2.9）；产品层通过 `SystemPromptFn` closure 自由拼接 SKILL.md。LLM 是否主动 read 的行为验证留给 Phase 5+ 产品层 | Phase 5+ |
+| G4 | B5 Compaction execute hook 是否过度抽象 | **砍**。关键证据：(1) 保留成本 ≈ 50 行 + 1 新类型；(2) 已知用户 0（handoff §2.2 自述无 ≥2 alternative 实现）；(3) 与 `Provider.Complete + Transcript` 路径冗余 → 违反 R2。详细量化论证 + 未来 trigger 见 [`phase2-grey-resolutions.md`](./phase2-grey-resolutions.md) §G4。 | 决策已下 |
+| G5 | D1 升级为 pattern（≥3 实例）| 当前**仅 1 例**（Agent/AgentHarness；G2 撤销后只剩这一例）。Phase 3 audit docs 时若发现 docs/01..09 中有第 2、第 3 例可升级 | Phase 3 |
+| G6 | （无）| handoff §4 列出 5 项，G6 占位空 | — |
+
+---
+
+## §7 — Phase 3 入口准备
+
+> 给 coord-audit 留的传话。Phase 3 要审 docs/01..09，需要 Phase 2 的设计原则作"审的标准"——但**不能让标准变成有色滤镜**。
+
+### Phase 3 应当问的核心问题（不预设答案）
+
+1. docs/01..09 中出现的概念，是否被 tau §2 核心抽象覆盖？逐文件标三种状态：**已覆盖** / **应覆盖但 §2 缺失** / **属产品层不应在核心**。
+2. docs/01..09 是否带 pi 偏见痕迹（用 pi 类名 / 用 pi 形状直接思考 Go）？逐份标记。
+3. docs/01..09 的设计决策是否违反 R1-R6 / C1-C10？逐条对照，**不解释为"小问题"——发现即标**。
+4. docs/01..09 中是否有 tau §2 **应当但未覆盖** 的设计点？coord-audit 发现后 send_to root，root 决定是补回 §2 还是确认推迟。
+
+### Phase 3 输入清单
+- 本设计稿（phase2-tau-design.md）—— 审的标准
+- handoff §1 C1-C10 —— 审的硬约束
+- `ltm://decisions/002` R1-R6 —— 审的铁律
+- docs/01..09 —— 审的对象
+
+### Phase 3 防 anchoring 提醒（W3 跨 phase 应用）
+- coord-audit **不应是 coord-design 兼任**（同 Phase 1→2 切换原则）
+- coord-audit 启动时**只读本设计稿 §1–§7 + handoff**，**不读 Phase 1 主稿** —— 主稿密度太高会 anchor audit 视角
+- coord-audit 应当用 W1 Q-First 协议挑战 Phase 2 决策本身：如果 audit 发现 docs/01..09 某条主张比 §2 更合理，**不要默认 §2 对**——上报 root 重审
+
+### Phase 3 范围红线
+
+- **不做**：把 docs/01..09 改写成 Phase 2 形态（Phase 4 的活）；用本稿命名取代 docs 命名（audit 是"差异报告"非"翻译稿"）。
+- **显式排除**：§2.7 ToolSchema 具体 API 形态（codegen 模板 / sum-type helper）= Phase 4 PRODUCE 范围；demo case 编译可行性（self-doubt #6）= Phase 4。Phase 3 撞到此类争议直接标"Phase 4 待决"。
+
+### Phase 4 PRODUCE 硬约束（提前埋点）
+
+**doc-sync 是 R3 在文档侧的落地**：docs/v2/ 中所有 demo Go code 必须能 `go build`（CI 跑 doc 提取 + 编译验证）。Phase 4 启动时硬约束，不可选。
+
+---
+
+## 附录 A — 命名映射表
+
+完整 12 条对照表（含 divergence 理由）见 [`phase2-naming-map.md`](./phase2-naming-map.md)。Phase 3 audit 遇到 pi 命名时查此表回到 tau 坐标。
+
+---
+
+## 附录 B — 自我盲区（W1 §5 self-doubt 强制项）
+
+> 写完后自陈：我没读什么 / 我假设了什么 / 我哪里没把握。
+
+1. **我没真读 pi 的 `Agent.subscribe` 内部实现**——A1/A2 都没下钻 raw provider event → 高层 AgentEvent 的 dispatch 逻辑。tau §2.5 的 sealed AgentEvent 类型集（MessageStart/Delta/End/ToolCall*/Turn*/Error）是从产品层"想消费什么"反推的，不是从 pi 的实际事件类型一一对应。**风险**：如果 pi 还有第 9、第 10 类语义事件（如重试 / cache hit / token usage），我可能漏。Phase 3 audit 时 coord-audit 应当查 docs/01..09 是否提到这些。
+2. **我假设 Go 的 channel + goroutine 取消语义足够表达 pi 的 abort 语义**。pi 的 `agent.abort()` + `waitForIdle()` 在 Go 里我用 ctx + Done() 表达，但 pi 的 abort 是否还涉及"清空 follow-up 队列"等 stateful 操作（A2 §A `clearAllQueues`）我没逐字段验证——A2 takeaway #4 说 v2.0 可砍但我**默认砍了**而非 evidence-based 砍。如果 Phase 5+ 产品层证明 follow-up 队列必要，§2.1 Run 接口需要扩。
+3. **B9 §4 决策完全悬空**——LLM key 阻塞，§2.7 ToolSchema 接口签名是占位的，可能 PoC 后需要变形（如 codegen 方案下需要 `ToolSchema` 不是 interface 而是泛型 `Schema[T]`）。**这是已知风险，不是盲区**——但承认 v0.5 草稿在此点 incomplete。
+4. **R2 自动化降级我承认了但未量化**：R2 "同义概念两个 type 名" 在自然语言层无法 100% lint，妥协为 review checkpoint。如果 Phase 3/4 发现实际 PR 中 R2 违反频繁逃过 review，需要回头加强（如训一个 LLM-based reviewer，但那超出 Phase 2 范围）。
+5. **W3-lite cross-system 已做但仅 3 库**（langchaingo / go-openai / openai-go，每库 ≤15min 看签名）。生态代表性有限：未读 Anthropic 官方 Go SDK / Google genai SDK；未深入 langchaingo main HEAD 演进方向；未读 OpenAI Responses API（其 `previous_response_id` 可能改变 Session N/A 判断）。这些是已知盲区。
+6. **§5 demo case 写出来了但没编译验证**（我作为 coord 不写代码）。`schema.For[EchoArgs]()` 这个泛型 helper 是占位假设，B9 决策后才知道真实 API 形态。Phase 4 PRODUCE 阶段必须由 builder 把 demo case 真编译跑通才算 §5 closed。
+7. **G4 砍 compaction execute hook** 已用 R2 + 量化成本论证升级（§6 G4），并显式化"未来验证 trigger"——但**核心假设仍未验证**：产品层 Phase 5+ 能否真用 `Provider.Complete + Transcript` 自己做 compaction，今天没有 PoC。Transcript 的 Subscribe/Slice 接口是为消费设计的，**写入路径是否支持产品层做 "summarize → replace tail" 这类 compaction 操作**未验证。如果验证失败，G4 决策要回退。
+8. **Hook 形态决策有 v0.6 短暂折叠 → v0.7 回滚到双 interface 的过程留痕**（§2.8 演化记录）。回滚理由是 trade-off 重审后发现 R2 收益是假象（单 Chain 方案需新增 errcheck lint 才安全等价）。**留痕风险**：未来 reviewer 可能误读"折叠尝试"作为"折叠合理"的证据，需要 reviewer 看完整 §2.8 演化段才能理解。Phase 4 PRODUCE 时如此节内容稳定，可考虑只保留最终决策段，把演化历程移到 ADR。
+9. **B9 决策的 Anthropic 网关 caveat**（§4）：oneOf 失效不区分协议/网关问题。Phase 5+ 第一次 Anthropic 产品落地必须用官方 API + strict mode 二验，否则 Anthropic-side 的 schema 约束力是未知数。
+
+---
+
+## 文档版本
+- v0.1 大纲 → v0.5 正文初稿 → v0.6 W3-lite + B9 PoC 整合 → v0.7 Hook 折叠回滚 + panic-fast 加固
+- **v1.0**（当前）：行数压缩 + 拆 4 独立文件（naming-map / self-doubt / rule-enforcement / grey-resolutions）
+- v1.0 行数压缩 + 拆分独立文件后定稿（≤500 行主稿 + 拆出独立文件若干）

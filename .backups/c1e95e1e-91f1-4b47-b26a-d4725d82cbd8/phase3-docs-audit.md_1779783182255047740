@@ -1,0 +1,225 @@
+# Phase 3 — Docs Audit 整合稿（v1.0）
+
+> **范围**：用 phase2 设计原则（C1-C10 + R1-R6 + G1-G6 + P1+P2）反向审视 tau/docs/01..09。
+> **方法**：3 analyst 并行（A1 复用-doc01/02/05；A2 复用-doc03/04/07；A5 新派-doc06/09）+ coord-audit 自审 doc-08；Q-First 协议；二选一裁决树；不允许"待定"。
+> **拆出文件**：见 [`phase3-audit-fragments/`](./phase3-audit-fragments/) 与各 analyst 子报告。
+> **入口资产**：
+> - 标尺：[`phase2-tau-design.md`](./phase2-tau-design.md)（含 G4 修订注 §6）+ [`phase1-to-phase2-handoff.md`](./phase1-to-phase2-handoff.md) §1 C1-C10
+> - 永久铁律：`ltm://team/decisions/002`；元原则 P1+P2：`ltm://team/decisions/005`
+> - 本阶段决策：`ltm://team/decisions/007` (5 战略候选裁决) + `ltm://team/decisions/008` (wire-protocol B 形态 + v1.2 scope) + `ltm://team/decisions/009` (G4 修订注 + Phase 4 重审清单机制)
+
+---
+
+## §1 — 核心结论
+
+**phase2 设计整体稳健**。9 docs × 4 类标记 = 共 145 项判断，**0 deadlock**（二选一裁决树全部命中 L1/L2/L3，无 escalate-to-Owner 卡死）。
+
+**1 个真盲区**（反向挑战 phase2 触发条件命中）：
+- **wire-protocol 维度**：phase2 §2.4 单层 `Register(name, p Provider)` 不区分 wire api（9 个）vs vendor（30+ 个）。A2 4 条 evidence 全 ✅ 强强强强（pi 源码层面 wire 是 first-class type + first-class registry key），证明 phase2 §2.4 必须升级。Owner 已 commit form B + Compat 强类型化进 v1.2。
+
+**1 个 phase2 自承的回退 trigger 命中**：
+- **G4 砍 compaction execute hook** 决策**已撤回**。phase2 §B self-doubt #7 字面 "Transcript 写入路径不支持 'summarize → replace tail' 则 G4 决策回退" 被 A1+A5 三方 evidence 证明（A1 `custom-compaction.ts` + A5 `pi.on session:compact` + `pi.registerProvider runtime`）。这是设计者自己 pre-commit 的回退条件被兑现，不是外部 challenge。**实质决策悬空**待 Phase 4 重审。
+
+**2 个轻补充进 v1.2**：
+- Usage 4 字段类型（doc-08 ➕ C1）
+- OAuth per-call 注释（doc-08 ➕ C2）
+
+**全局**：phase2 设计的"砍 AgentHarness/砍 steer-followUp/Hook 双 generic interface/Tool struct 不 interface/onUpdate callback 不 channel" 等关键决策**全部经 audit 验证为正确**——docs 描述的 pi 反例正向印证了 phase2 的修正。
+
+---
+
+## §2 — 4 类标记汇总
+
+| Doc | 行数 | 审者 | ✅ 保留 | ⚠️ 冲突 | ➕ 补充 | ❌ 弃用 | 子报告 |
+|---|---|---|---|---|---|---|---|
+| 01 agent-loop | 120 | A1 | 5 | 4 | 3 | 3 | [`phase3-audit-A1.md`](./phase3-audit-A1.md) §doc-01 |
+| 02 harness | 204 | A1 | 6 | 4 | 3 | 4 | [`phase3-audit-A1.md`](./phase3-audit-A1.md) §doc-02 |
+| 03 tool-protocol | 121 | A2 | 6 | 2 | 2 | 0 | [`phase3-audit-fragments/A2-report-doc03-04-07.md`](./phase3-audit-fragments/A2-report-doc03-04-07.md) |
+| 04 provider-abstraction | 198 | A2 | 7 | 4 | 3 | 1 | 同上 |
+| 05 multi-session-safety | 129 | A1 | 6 | 0 | 2 | 0 | [`phase3-audit-A1.md`](./phase3-audit-A1.md) §doc-05 |
+| 06 self-extensibility | 181 | A5 | 4 | 4 | 3 | 3 | A5 报告 + [`phase3-audit-fragments/`](./phase3-audit-fragments/) ⚠️-06.3/06.4 升级版 |
+| 07 testing-faux-provider | 220 | A2 | 8 | 3 | 2 | 0 | A2 子报告（行 215/219 整段标弃用）|
+| 08 design-principles | 157 | self | 20 | 5 | 6 | 2 | [`phase3-audit-fragments/doc-08-design-principles.md`](./phase3-audit-fragments/doc-08-design-principles.md) |
+| 09 go-module-structure | 202 | A5 | 5 | 7 (+3 scope) | 2 | 5→2 (3 重标 ⚠️ scope 错位) | A5 报告 + fragment |
+| **合计** | **1532** | — | **67** | **33** | **26** | **15** | — |
+
+**最严重 5 个 ⚠️ 冲突**（按破坏面降序）：
+
+1. **[doc-09 ⚠️-1] `core/` + `harness/` 双层包结构** — pi Agent vs AgentHarness D1 #1 反复反模式的 Go 形态再实例化 + harness/harness.go 文件头注释含 4 个已砍概念（D1 双层 / steer / followUp / compact）。**对 Phase 4 PRODUCE 影响最深**：v2 重写的第一刀必须画核心仓库 vs 产品仓库边界。
+2. **[doc-04 ⚠️ Compat any]** — Go sketch 行 197 字面 R1 violation。phase2 §3 R1 (b) 明确禁 `any` 在公开 API 签名。v1.2 必须替换为 `Compat WireCompat`（sealed interface）。
+3. **[doc-06 ⚠️-3] `pi.on(event, handler)` 单 API 暗分语义** — C5 字面违反（observer 与 transformer 混 API）+ A5 三方互证（行 86 `session:compact` 一等事件 + A1 `custom-compaction.ts` + agent-session.ts:1665/1938）= P1 \"用户痛已发生过\" 反例。
+4. **[doc-09 ⚠️-2] `session/` 独立顶层包 + JSONL/fork/tree** — Session 被降级为外部包（违反 phase2 §2.2 一等抽象决策）+ JSONL 持久化与 fork tree 植入核心模块布局（产品层职责混入）。
+5. **[doc-08 W1 / doc-09 \"Top borrowable #1\"] Append-only session **tree** with LeafEntry** — phase2 §2.3 是 flat Position；裁决：phase2 设计 + self-doubt 升级（design note：tree 推产品层）。
+
+**最关键 3 个 ➕ 补充**（影响 v1.2 范围或 Phase 4 重审清单）：
+
+1. **wire-protocol 维度（doc-04）** — A2 4 evidence 全 ✅ → v1.2 form B 升级 + Compat 强类型化
+2. **Usage 4 字段 + OAuth per-call（doc-04 §4.7+§4.8 / doc-08 ➕ C1+C2）** — v1.2 §2.4 加 type Usage struct + OAuth 注释
+3. **OnPayload/OnResponse callback（doc-07 §7.3 + A2 Q3 evidence pi types.ts:109/114）** — StreamRequest 加 2 callback 字段（与 TransformToolName 同模式，不破红线）
+
+**最锋利 3 个 ❌ 弃用**（Phase 4 builder 必须避免）：
+
+1. **doc-04 Go sketch `Compat any`** — R1 字面违反，pi anchoring 直搬 TS 条件类型到 Go
+2. **doc-08 §8.3 `RegisterCustomMessageType` Go sketch** — 包级 mutable register，违反 R4
+3. **doc-08 §8.3 \"blank-import for lazy provider loading\"** — 让 init() 偷偷往全局注册，反 phase2 §2.4 ProviderRegistry Session-scoped
+
+---
+
+## §3 — 反向挑战 phase2: v1.2 任务包雏形
+
+**召回 coord-design 时给的 mission package draft**。Owner 验收后我会以 `send_to(coord-design)` 形式发出。
+
+### v1.2 范围（红线锁定 ≤ §2.4 + ModelSpec）
+
+| # | 修订点 | Phase 3 evidence 来源 | 形态 |
+|---|---|---|---|
+| 1 | §2.4 Provider/ProviderRegistry 升级 wire-protocol 维度 (form B) | A2 wire-protocol 4 evidence 全 ✅ + ltm://008 | 用户暴露面 `Session.Providers.RegisterVendor(name, VendorConfig{API WireAPI, BaseURL, OAuth, Models})`；内部维护 wire impl 表（9 个 init 注册） |
+| 2 | §2.4 ModelSpec 加 WireAPI 字段 | 同上 + A2 Q3a evidence | `ModelSpec.WireAPI WireAPI` — dispatch key |
+| 3 | §2.4 Compat 强类型化（不允许 any）| doc-04 ⚠️ R1 violation | `VendorConfig.Compat Compat[A WireAPI]` 泛型 OR sealed interface（具体形态 coord-design 决定） |
+| 4 | §2.4 加 Usage 4 字段类型 | doc-08 ➕ C1（surprise #7）| `type Usage struct { Input, Output, CacheRead, CacheWrite int }` 嵌入 ProviderEvent / CompleteResponse |
+| 5 | §2.4 OAuth per-call 注释 | doc-08 ➕ C2（surprise #8）+ A2 Q3 evidence | OAuth provider 实现内部应支持 per-call token 刷新（pi `getApiKey` 模式）—— short-lived token 在长 tool 跑期间可能过期 |
+| 6 | §2.4 StreamRequest 加 OnPayload/OnResponse callback | A2 Q3 evidence: pi types.ts:109/114 是 StreamOptions 字段非 hook | `OnPayload func(payload any) (any, error); OnResponse func(resp HTTPResponse)` — 与 `TransformToolName` 同模式，不破 §2.8 HookSet 红线 |
+| 7 | §6 G4 段（已由 coord-audit 立即写入）| ltm://009 + 上述 G4 修订注 | 状态：✅ 已完成（不再需 coord-design 处理） |
+
+### v1.2 红线（coord-design 必守）
+
+- **仅动 §2.4 + ModelSpec**——其他 8 抽象 + §1/§3/§5/§6/§7 不动
+- **牵动其他抽象 → 砍此项 OR 升 v2.0**（不在 v1.2 内做）
+- **不允许范围爆炸**——这是补丁式升级不是重写
+- **Phase 3 已识别但越红线的项 → Phase 4 重审清单**（见 §4），coord-design 不接
+
+### v1.2 出版动作（coord-design 应做）
+
+- 主稿版本 v1.0 → v1.2（跳过 v1.1，因 v1.1 被 coord-design 自己用过 = 拆分独立文件那次）
+- §2.4 整段重写（保留原架构，加 wire/vendor 双层）
+- 新增小段："§2.4 Vendor vs Wire Protocol 双层"（≤ 30 行说明）
+- §B self-doubt 加 1 条："wire-protocol 维度由 Phase 3 audit 反向触发；form B + Compat 强类型化是 Owner 裁决（ltm://008）"
+- 不动其他章节（§6 G4 修订注已存在；其他 ➕ 进 §5 接入点不在 v1.2 范围）
+
+---
+
+## §4 — Phase 4 重审清单（独立小节）
+
+> Owner 裁决 (ltm://009)：不引入 v1.3。Phase 3 audit 命中但 v1.2 不接的项归此清单，Phase 4 PRODUCE 启动时 Owner 根据清单大小决定 (a) 同时处理 docs/v2/ 落地 + 重审清单 (b) 加独立 design phase 先处理重审清单。
+
+| # | 项 | 来源 evidence | phase2 受影响节 | 重审需要 | 优先级 |
+|---|---|---|---|---|---|
+| **R1** | **G4 Compaction execute hook 决策已撤回** | A1 `custom-compaction.ts:9-115` + agent-session.ts:1665/1938；A5 doc-06 行 86 `pi.on session:compact` + 行 92 `pi.registerProvider runtime`；phase2 self-doubt #7 trigger 命中 | §6 G4 / §2.3 Transcript / §2.8 HookSet（潜在）| 路径 A: HookSet 加 `LastWins[CompactionRequest]`（≈50 行）<br>路径 B: Transcript 加 `AppendCompactionSummary(summary, firstKeptEntryID Position, tokensBefore int) error`<br>路径 C: A+B 都做（A 给 core trigger，B 给 user trigger）<br>**重审结果可能仍是砍**——撤回让重审 fresh start，不预设结论<br>Owner/coord-audit/A1 倾向路径 A，**不预 commit** | **高** |
+| R2 | IsActive guard 候选 | A1 Q2：`ctx.Done()` 答 "can be cancelled?" 不答 "is a turn already in flight?"；并发 `loop.Prompt(sess, ...)` 无 guard | §2.1 Run / Loop 接口 | 加 `Run.IsActive() bool` 或 `Session.IsActive() bool`（≤5 行 contract）vs 让产品层用 mutex（R1 类型即真相要求 contract 层显式拒绝） | 中 |
+| R3 | Transcript 是否需要 entry type union | doc-02 §2.1 10 种 SessionTreeEntry；A1 ➕ 1：phase2 §2.3 没列 entry type union | §2.3 Transcript | 决策：核心 Message-only 还是允许产品层扩展 entry type；若允许，Transcript 接口需要 generic 化（`Transcript[E EntryType]`）OR 暴露 customEntry append 入口 | 中 |
+| R4 | extractFileOps 显式接口注入 | A2 Q2 + doc-03 §"Built-in tools" 行 73 \"convention-based not schema-enforced\" | §5 接入点（新增）| phase2 §5 加 `Session.OnToolResult` 或 `FileOperationsExtractor func(ToolResult) []FileOp` 显式注入接入点（产品层 compaction 需要从 tool result 提取 file ops，tau 应让产品层显式注入而非按 tool name 硬扫）| 低 |
+| R5 | toolResult ordering caveat | A2 Q5 复审 + doc-03 §"Execution model" 行 41 | §5.1 caveat | §5.1 caveat 加：\"并行 batch 中 ToolCallEnd events 按完成顺序到达；但产品层观察 Session.Transcript.Messages 时 toolResult 按 source order 排——这两套 ordering 同时存在\" | 低 |
+| R6 | phase machine design note | doc-08 W5 / doc-02 ⚠️ phase machine | §2.2 Session（仅 design note 不加字段）| §2.2 加 design note："Session 不持有 phase enum——pi 的 idle\\|turn\\|compaction 状态机是其 loop+harness+compaction 同对象耦合的产物。tau 通过 (a) Loop 无字段 (b) compaction 推产品层 (c) Tool.Mode 控并行 三个结构性分离消除了 phase enum。注意：若产品层自实 compaction，需自带 phase 防护" | 低 |
+| R7 | LeafEntry / tree 模型 design note | doc-08 W1 / doc-02 §2.1 / doc-09 §9.1 §9.2 | §2.3 Transcript（仅 design note 不加字段）| §2.3 加 design note："Transcript 是 flat 设计；产品层若需 fork/branch/undo 语义，可在 Transcript 之上构建 tree 视图（pi 的 LeafEntry 模式是参考实现），但 core 不强制此结构" | 低 |
+
+**清单大小评估**：当前 7 项，3 项低优先级是 design note（不改设计仅加注），不构成"清单过大"。**预测 Phase 4 启动时 Owner 选 (a)**：Phase 4 同时处理 docs/v2/ 落地 + 重审清单。但 R1 (G4) 实质决策需要先解（HookSet 改动牵连大），可能成为 Phase 4 第一个里程碑。
+
+---
+
+## §5 — 自我盲区 + 预测错误模式元学习
+
+### §5.1 我跳了什么
+
+- **Phase 1 主稿**（按 Owner 红线禁读，避免 anchoring）— 通过异步咨询 coord-critique 替代，未触发
+- **pi 源码**（按角色红线禁读）— A1+A2 用各自 Phase 1 源码记忆作 second-source confirmation
+- **phase2 拆出 4 文件全文**（仅 grey-resolutions §G4 段被 A1 复审引用）— 风险：rule-enforcement.md 可能含 lint PoC 细节我未读
+- **doc-09 §9.1 行 49-54 size table**（LOC 估算）— A5 标"否（不入主稿）但保留作 Phase 4 PRODUCE 输入"
+
+### §5.2 我假设了什么
+
+- **A2 wire-protocol 4 evidence 强强强强可信** — 基于 pi 源码 line numbers 直接引用，未独立 verify。**Owner pre-commit 已锁 form B**，假设错则 v1.2 设计错；置信 ~95%（4 条独立切面互证）
+- **A1 G4 evidence trigger 命中是设计者 self-doubt #7 兑现** — phase2 设计者写的 self-doubt #7 字面对应 A1 evidence 形态，假设这个映射对；置信 ~98%
+- **A5 doc-09 scope 错位归类**（Q1 Owner 倾向 ⚠️ 而非 ❌）—— 假设 A5 自陈 self-doubt #2 是对的（doc-09 自身没分核心 vs 产品仓库）；置信 ~85%
+
+### §5.3 元学习：预测错误模式
+
+**Phase 0 我对 9 docs 的偏见预测命中率约 70%（5/9 命中精准 + 1/9 部分命中 + 3/9 意外）**。3 个意外的共同模式：
+
+1. **doc 08 不是互补——是冲突浓度最高**：我 Phase 0 把 doc 08 当"哲学层 → 与 phase2 §1 5 断言互补"整体预测，没分 §8.1 哲学/§8.2 借鉴/§8.3 反例/§8.4 surprise 4 层。**实际**：§8.1+§8.3+§8.4 与 phase2 强对齐（21 ✅）；冲突全集中在 §8.2 \"Top borrowable\"段（5 ⚠️ 中 4 项来自 §8.2）。
+2. **wire-protocol 维度**：phase2 §2.4 缺这条维度我没预测到。**模式**：phase2 是 evidence-based 推 Phase 1+W3-lite，但 W3-lite 仅 3 库（langchaingo/go-openai/openai-go）每库 ≤15 min 看签名，**广度有但深度浅**——pi 30→9 wire 映射这种"内部架构 first-class type"需要源码级深度才能捕捉。
+3. **`compat` 20+ vendor knobs**：真实生态复杂度 phase2 没考虑。**模式**：W3-lite 看的是"该库怎么暴露 Provider 抽象"，不是"该库怎么处理 vendor quirks"；后者只有读真实 production code 才浮出。
+
+**下次 audit 类似复合 doc 时改进**：
+- 哲学+借鉴+反例混合 doc 分 3 层预测（§8 模式）
+- 抽象 doc 与具体 doc 用不同标尺（§8 哲学/§9 包结构 一份 audit 但分别裁决）
+- "phase2 自承的盲区候选"（§B self-doubt N 条）Phase 0 速读时应专门一遍——我跳过这步是 #2 #3 错过的根因之一
+
+### §5.4 我没把握的判断
+
+- **doc-09 ❌-3 (Compat any flags)** A5 标置信 50-60%——我未独立 verify，依赖 A5 自陈 + Phase 1 D13 推断
+- **doc-06 ⚠️-3 (`pi.on` chain)** A5 标 75%——doc 字面 + C5 红线匹配度高但 pi 实现可能更精细
+- **doc-09 ⚠️-7 (sourceID unregister)** A5 标 70%——基于 ⚠️-1 + ⚠️-2 + doc-06 §6.7 #3 拼合推断
+- **G4 撤回后 Phase 4 重审最终结论**——可能仍是砍，可能加 hook，可能改 Transcript 写入路径；我直觉倾向路径 A 但 Owner 不预 commit
+- **OnPayload/OnResponse 进 v1.2 的边界感**——A2 Q3 evidence 强但加这条让 v1.2 范围接近 6→7 项；若 Owner 觉得过载可砍这条进 R4
+
+### §5.5 反向 anchoring 防御反思
+
+**第一道防线（预期错误清单）**：Phase 0 做了 9 doc 各 3-5 个预测点，反 anchoring 命中 5/9——**不完美但有效**。
+**第二道防线（每 doc §5 self-doubt 含 anchoring 段）**：A1+A2 都自陈 anchoring 来源（A1 doc 02 受 Phase 1 §3.6 双类型敏感影响，A2 doc 03 因 Phase 1 §3.6 已对齐而快速放过）——**新派 A5 没有 Phase 1 anchor，自陈 docs 精心写作说服风险（doc-09 §9.3 build order 哲学 anchoring 陷阱），Owner 预先归 ➕ Phase 5+ trigger 救了它**。两种 anchoring 类型（同向利用/反向警惕）都被识别+管控。
+**第三道防线（trade-off 量化阻止印象判断）**：doc-08 W1/W5 / doc-02 phase machine / doc-09 ⚠️-1 都做了 trade-off 量化。
+**第四道防线（派 analyst 反向挑战 phase2 唯一允许触发条件）**：wire-protocol 4 evidence 命中触发条件 → form B 进 v1.2；G4 命中 self-doubt #7 trigger → 决策撤回。**两个反向修订都是 evidence-driven 不是 audit 直觉**。
+
+**项目记忆持久化的 namespace 纪律（元学习）**：Phase 3 接近收尾时被 Owner 抓到一处 ltm bookkeeping 不一致——我把决策写到 `ltm://decisions/...` 命名空间（spawn 时从 parent 继承到我 view 的 bare 命名空间），而 Owner 的 authoritative ltm 在 `ltm://team/decisions/...`。表面是地址错位，本质是 **R3 元铁律的反面应用：纸面规则（spawn 时 task message 提过命名空间）不被工具链强制 = 必然漂移**。Owner 已固化 `ltm://team/decisions/010` 把 namespace 纪律升为永久铁律：唯一 authoritative `ltm://team/decisions/NNN-kebab-case` + 写后必须 list 验证（"我写了" ≠ "已固化"）+ 引用前必须验证 key 存在 + 所有 mission package 必含此红线。**这是从 pi 蒸馏的 R3 钻石在 tau 自身记忆系统的第一次实证应用**——bookkeeping 也是 R3 的覆盖范围，承诺与现实的对齐需要工具链强制不是纪律自觉。
+
+
+---
+
+## §6 — Phase 4 PRODUCE 入口建议
+
+### §6.1 Phase 4 启动时机
+
+**建议立即可启动**，前提是 v1.2 已由 coord-design 落地。原因：
+- Phase 3 audit deliverable 完整（本稿 + 4 个 fragment）
+- v1.2 范围明确（§3 任务包雏形）
+- Phase 4 重审清单（§4）大小适中——7 项中 3 项是 design note，4 项实质修订；不需要前置 design phase
+- docs/01..09 已有清晰的"可借鉴 / 必重写 / 必弃用"路径（§6.2-§6.4）
+
+### §6.2 Phase 4 PRODUCE 输入清单
+
+**docs/v2/ 重写时各 doc 处理建议**：
+
+| docs/01..09 | 在 docs/v2/ 中的处理 | 重写要点 |
+|---|---|---|
+| 01 agent-loop | **重写**（保留 ✅ 项 + 改 ❌ 弃用项 + 集成 phase2 §2.1）| 砍 double-while 描述（pi 实现细节）；砍 callback bag 平铺；用 phase2 §2.5 sealed event interface |
+| 02 harness | **大量重写**（保留 §2.1 append-only 概念 + §2.3 storage hint 给产品层；砍 §2.2 phase machine / §2.4 compaction first-class / §2.7 unified hook bus）| 把 harness 整章拆分：核心层 = phase2 §2.2 Session；产品层 = pi-style harness 作为 reference 实现 |
+| 03 tool-protocol | **轻改**（高度对齐 phase2 §2.6）| Go sketch 改 interface→struct；§"Built-in tools" 行 73 加 \"tau divergence: explicit FileOperations interface\" |
+| 04 provider-abstraction | **重写**（保留 §4.3 wire/vendor 洞察 + §4.4 compat 现实记录；砍 §"Go sketch" 全部）| §"Go sketch" 重做：Provider interface 加 Complete + Compat 强类型 + Session-scoped registry + wire/vendor 双层 |
+| 05 multi-session-safety | **保留**（产品层指南）| 加注明 "scope: 产品层选 file-per-session 等存储方案的指南，phase2 core 通过 §2.2 R4 在结构层达到等价 safety" |
+| 06 self-extensibility | **大量重写**（保留 §6.6 选型对照 + §6.4 sandbox=产品层标注 + §6.5 stale-ctx 模式 Phase 5+ trigger；砍 §6.3 90+ events / ctx 行动入口；砍 §6.7 pre-bind queue / two-tier API）| 转向："tau 不直接提供 extension subsystem；产品层若需要，用 §6.6 Option A (Starlark/goja) + 遵守 §6.4 sandbox 决策权 + §6.5 stale-ctx invalidate 模式" |
+| 07 testing-faux-provider | **轻改**（与 phase2 §5.6 + B2 强一致）| §7.6 行 215+219 两条 test pattern 标 \"Phase 5+ when steer added back\" 与 \"Phase 4 重审 G4 后启用\" |
+| 08 design-principles | **保留 §8.1+§8.3+§8.4**（哲学+反例+surprise 与 phase2 强对齐）；§8.2 \"Top borrowable\"重写 | §8.2 替换为 \"phase2 已采纳的借鉴清单\"——LeafEntry 推产品层；compaction 待 Phase 4 重审；steer 推 Phase 5+；Hook chain 双 generic interface ✓；Faux ✓ |
+| 09 go-module-structure | **整体重做**（仅保留 §9.1 providers/ wire-protocol 分包 + §9.2 build order 整体哲学 + §9.4 v0.1 milestone 思路）| 重做布局：core/ 一层（含 Loop/Session/Transcript/3 Registry/Hook/AgentEvent）；providers/{wire-protocol-name}/；产品层 builtins/skills/extensions/env/harness 全部移到 tau-based 产品仓库 |
+
+### §6.3 Phase 4 硬约束（已埋点，提醒）
+
+- **doc-sync = R3 在文档侧的落地**：docs/v2/ 中所有 demo Go code 必须能 `go build`（CI 跑 doc 提取 + 编译验证）
+- **wire-protocol 维度** v1.2 形态进 docs/v2/04 后，所有 provider example 必须按 form B 写
+- **Compat 强类型化** 强制——任何 demo Go code 含 `any` / `interface{}` 公开 API 直接 CI fail
+- **Phase 4 重审清单 R1 (G4)** 需要先在 Phase 4 早期决（A/B/C 路径），决了才能写 docs/v2/02 的 compaction 段
+
+### §6.4 召回 coord-design 时机（v1.2 mission package 出发）
+
+**等 Owner 验收本稿** → Owner ack 后我以 mission package draft（§3）形式 send_to(coord-design)，含：
+- v1.2 范围 7 项（含 §6 G4 修订注已完成）
+- 红线 + 越红线项指引（→ Phase 4 重审清单）
+- evidence 来源链接（ltm://007/008/009 + Phase 3 fragments）
+- 出版动作清单（§3 末尾）
+
+预算给 coord-design：≤80 turn（v1.2 是补丁式升级，不是重写；coord-design v1.0/v1.1 已 151 turn，对设计内化深，v1.2 应高效）。
+
+---
+
+## 附录 A — 拆出文件清单
+
+- [`phase3-audit-A1.md`](./phase3-audit-A1.md) — A1 完整报告（doc 01/02/05 + Q-First 答 + grey-resolutions G4 sharpen）
+- [`phase3-audit-fragments/A2-report-doc03-04-07.md`](./phase3-audit-fragments/A2-report-doc03-04-07.md) — A2 子报告 archive（含 wire-protocol 4 evidence + G4 evidence + Q-First 5 答）
+- [`phase3-audit-fragments/doc-08-design-principles.md`](./phase3-audit-fragments/doc-08-design-principles.md) — 我自审 doc-08 完整稿
+- A5 报告 + ⚠️-06.3/06.4 升级版 + scope 错位三项 fragment（A5 已交，待我整合时直接引用）
+
+---
+
+## 文档版本
+
+- v1.0（当前）— Phase 3 audit 完成稿
+- 维护者：coord-audit
+- 完成时间：2025-05-26

@@ -1,0 +1,227 @@
+// LLM-side test: feed each approach's schema to gpt-5.4 + claude-haiku-4-5
+// via the mihoyo gateway. Two cases per (approach × provider):
+//
+//	A — simple call: "read /etc/hosts in mode read"
+//	B — discriminated union: "create /a then delete b"
+//
+// Output table is printed to stdout and saved to results.json.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+type result struct {
+	Approach string `json:"approach"`
+	Provider string `json:"provider"`
+	Case     string `json:"case"`
+	HTTP     int    `json:"http"`
+	Accepted bool   `json:"schema_accepted"`
+	ToolName string `json:"tool_name,omitempty"`
+	ToolArgs any    `json:"tool_args,omitempty"`
+	Note     string `json:"note,omitempty"`
+	RawErr   string `json:"raw_err,omitempty"`
+}
+
+const sysPrompt = "You are a tool-using assistant. When asked, you MUST call the file_tool function with the right arguments. Do not chat — call the tool."
+
+var prompts = map[string]string{
+	"A": `Use the file_tool to read the file at path "/etc/hosts" in mode "read". No actions are needed (pass an empty actions list). Options: empty.`,
+	"B": `Use the file_tool. path="/tmp/x", mode="write". The actions list must contain TWO actions in order: (1) create the file at path "/tmp/a"; (2) delete the file with id "b-123". Options: empty.`,
+}
+
+// =================== OpenAI-compat ===================
+func callOpenAI(schema json.RawMessage, userPrompt string) (*result, error) {
+	base := os.Getenv("ANTHROPIC_BASE_URL")
+	tok := os.Getenv("ANTHROPIC_AUTH_TOKEN")
+	body := map[string]any{
+		"model": "gpt-5.4",
+		"messages": []map[string]any{
+			{"role": "system", "content": sysPrompt},
+			{"role": "user", "content": userPrompt},
+		},
+		"tools": []map[string]any{{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "file_tool",
+				"description": "Operate on a file with optional batch actions.",
+				"parameters":  schema,
+			},
+		}},
+		"tool_choice": map[string]any{"type": "function", "function": map[string]string{"name": "file_tool"}},
+		"max_tokens":  1024,
+	}
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", base+"/v1/chat/completions", bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	cli := &http.Client{Timeout: 60 * time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return &result{HTTP: 0, RawErr: err.Error()}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	r := &result{HTTP: resp.StatusCode}
+	if resp.StatusCode != 200 {
+		r.Note = "HTTP non-200"
+		r.RawErr = string(raw)
+		if len(r.RawErr) > 400 {
+			r.RawErr = r.RawErr[:400]
+		}
+		return r, nil
+	}
+	r.Accepted = true
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	_ = json.Unmarshal(raw, &parsed)
+	if len(parsed.Choices) > 0 && len(parsed.Choices[0].Message.ToolCalls) > 0 {
+		tc := parsed.Choices[0].Message.ToolCalls[0]
+		r.ToolName = tc.Function.Name
+		var args any
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err == nil {
+			r.ToolArgs = args
+		} else {
+			r.ToolArgs = tc.Function.Arguments
+		}
+	} else {
+		r.Note = "no tool_call returned; content=" + parsed.Choices[0].Message.Content
+	}
+	return r, nil
+}
+
+// =================== Anthropic ===================
+func callAnthropic(schema json.RawMessage, userPrompt string) (*result, error) {
+	base := os.Getenv("ANTHROPIC_BASE_URL")
+	tok := os.Getenv("ANTHROPIC_AUTH_TOKEN")
+	body := map[string]any{
+		"model":      "claude-haiku-4-5-20251001",
+		"max_tokens": 1024,
+		"system":     sysPrompt,
+		"tools": []map[string]any{{
+			"name":         "file_tool",
+			"description":  "Operate on a file with optional batch actions.",
+			"input_schema": schema,
+		}},
+		"tool_choice": map[string]string{"type": "tool", "name": "file_tool"},
+		"messages": []map[string]any{
+			{"role": "user", "content": userPrompt},
+		},
+	}
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", base+"/v1/messages", bytes.NewReader(b))
+	req.Header.Set("x-api-key", tok)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	cli := &http.Client{Timeout: 60 * time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return &result{HTTP: 0, RawErr: err.Error()}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	r := &result{HTTP: resp.StatusCode}
+	if resp.StatusCode != 200 {
+		r.Note = "HTTP non-200"
+		r.RawErr = string(raw)
+		if len(r.RawErr) > 400 {
+			r.RawErr = r.RawErr[:400]
+		}
+		return r, nil
+	}
+	r.Accepted = true
+	var parsed struct {
+		Content []struct {
+			Type  string          `json:"type"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+			Text  string          `json:"text"`
+		} `json:"content"`
+	}
+	_ = json.Unmarshal(raw, &parsed)
+	for _, c := range parsed.Content {
+		if c.Type == "tool_use" {
+			r.ToolName = c.Name
+			var args any
+			_ = json.Unmarshal(c.Input, &args)
+			r.ToolArgs = args
+			return r, nil
+		}
+	}
+	r.Note = "no tool_use returned"
+	return r, nil
+}
+
+func main() {
+	approaches := map[string]string{
+		"reflect":  "/tmp/tau-spike-b9/approach1_reflect/schema.json",
+		"codegen":  "/tmp/tau-spike-b9/approach2_codegen/schema.json",
+		"struct-tag": "/tmp/tau-spike-b9/approach3_tag/schema.json",
+	}
+	cases := []string{"A", "B"}
+	providers := []string{"openai", "anthropic"}
+
+	var all []result
+	for _, ap := range []string{"reflect", "codegen", "struct-tag"} {
+		schemaPath := approaches[ap]
+		schemaBytes, err := os.ReadFile(schemaPath)
+		if err != nil {
+			fmt.Printf("[%s] cannot read schema: %v\n", ap, err)
+			continue
+		}
+		var raw json.RawMessage = schemaBytes
+		for _, prov := range providers {
+			for _, cs := range cases {
+				prompt := prompts[cs]
+				var r *result
+				if prov == "openai" {
+					r, _ = callOpenAI(raw, prompt)
+				} else {
+					r, _ = callAnthropic(raw, prompt)
+				}
+				if r == nil {
+					r = &result{}
+				}
+				r.Approach, r.Provider, r.Case = ap, prov, cs
+				all = append(all, *r)
+				fmt.Printf("[%-10s | %-9s | case %s] http=%d accepted=%v tool=%s\n",
+					ap, prov, cs, r.HTTP, r.Accepted, r.ToolName)
+				if r.RawErr != "" {
+					fmt.Printf("    err: %s\n", r.RawErr)
+				}
+				if r.ToolArgs != nil {
+					ab, _ := json.Marshal(r.ToolArgs)
+					if len(ab) > 250 {
+						ab = ab[:250]
+					}
+					fmt.Printf("    args: %s\n", ab)
+				}
+				if r.Note != "" {
+					fmt.Printf("    note: %s\n", r.Note)
+				}
+			}
+		}
+	}
+
+	out, _ := json.MarshalIndent(all, "", "  ")
+	_ = os.WriteFile(filepath.Join("/tmp/tau-spike-b9", "llm_results.json"), out, 0644)
+	fmt.Println("\n=== results saved to /tmp/tau-spike-b9/llm_results.json ===")
+}

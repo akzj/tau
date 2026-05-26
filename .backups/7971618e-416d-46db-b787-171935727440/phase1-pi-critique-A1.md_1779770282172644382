@@ -1,0 +1,532 @@
+# Phase 1 / A1 — packages/agent 批判性分析
+
+> Scope: `pi/packages/agent/` 仅。所有引用使用相对 `pi/packages/agent/` 的路径。
+> 我没有读 docs/01..09。引用任何"docs 视角"前都做过源码二次验证。
+
+---
+
+## 0. 我读了什么、没读什么
+
+**完整读完**（src，5 个核心文件，~3.4k 行）：
+- `src/agent-loop.ts` (742) — 低层 loop
+- `src/agent.ts` (557) — 高层 Agent 包装
+- `src/types.ts` (418) — 公共类型
+- `src/harness/agent-harness.ts` (995) — harness 编排层
+- `src/harness/types.ts` (815) — harness 公共类型 + Result + 错误类
+- `src/harness/compaction/compaction.ts` (755) — compaction 主逻辑
+- `src/harness/session/session.ts` (252) — session 树包装
+- `src/index.ts` (44) — barrel export
+
+**读完的 docs/**（pi 作者的设计自述，不是 tau/docs/01..09）：
+- `docs/agent-harness.md`（极重要，下面多处引用）
+
+**抽样读**（按"接口面 + 测试体感"两条标准）：
+- `test/agent-loop.test.ts` 头 150 行（测试风格、stream 注入）
+- `test/harness/agent-harness.test.ts` 前 200 行（faux provider 用法）
+- `src/proxy.ts` 用 grep 抽查（`as any` 集中地）
+- `src/harness/skills.ts` / `src/harness/system-prompt.ts` / `src/harness/messages.ts`：仅看了导出符号 + 长度
+- `src/harness/env/nodejs.ts`：grep `process.*` 验证 Node 隔离
+- `src/harness/session/jsonl-storage.ts` / `memory-storage.ts`：仅看了文件长度，没读实现细节
+
+**跳过**（理由）：
+- `src/proxy.ts` 大部分（367 行，跟代理转发协议高度耦合，不影响 agent 抽象判断）
+- `src/harness/utils/truncate.ts` / `shell-output.ts`（utility，对架构判断帮助小）
+- `src/harness/compaction/branch-summarization.ts` / `compaction/utils.ts`（看了 compaction.ts 主流程足够）
+- `test/` 大部分（用了 grep 统计 mock 出现次数，覆盖判断够了）
+- `pi/AGENTS.md`：是开发流程规则（commit/release/git），不是架构自述。**不是有用文献**。
+- `docs/durable-harness.md` / `docs/hooks.md` / `docs/observability.md`：看了 agent-harness.md 主线，其余跳过——主要矛盾已经清楚。
+
+> **修订记录**：本报告经 question-first 一轮挑战，§3.2 经自我修正（原版"agent-loop mutate 调用方 context.messages"判断错误——`runAgentLoop:104-107` 实际是 spread copy；底层债仍存在，但机制不同，已重写为"loop-internal-mirror-is-invisible-exhaust"）。
+
+---
+
+## 1. 这一层的鸟瞰
+
+`packages/agent` 是一个 **TypeScript 的 stateful agent harness**，分成两层堆叠：
+
+```
+应用 / coding-agent / TUI
+       │
+       ▼
+┌──────────────────────────────────┐
+│  AgentHarness  (harness 层)       │   ← 持久化 session-tree、resources、
+│                                   │     compaction、provider auth、
+│                                   │     skills、prompt templates、queue
+└──────────────────────────────────┘
+       │  直接调用 runAgentLoop()
+       ▼          （不通过 Agent 类）
+┌──────────────────────────────────┐
+│  Agent  (内存包装层)               │   ← 单条 transcript、events、
+│  + agent-loop  (核心循环)          │     subscribe、abort、queue
+└──────────────────────────────────┘
+       │
+       ▼  StreamFn → @earendil-works/pi-ai
+```
+
+核心抽象（按重要度）：
+1. **`AgentMessage` = `Message | CustomAgentMessages[keyof ...]`**：通过 declaration merging 让 app 加自定义消息类型，再用 `convertToLlm` 桥接到 LLM。
+2. **`agentLoop(prompts, context, config) → EventStream<AgentEvent, AgentMessage[]>`**：低层 loop，emit `agent_start/turn_start/message_*/tool_execution_*/turn_end/agent_end`。
+3. **`AgentTool<TParameters extends TSchema, TDetails>`**：typebox schema-based 参数 + `execute(toolCallId, params, signal, onUpdate)`。错误用 `throw`，被 loop 捕获转为 `isError: true` 的 toolResult。
+4. **Hooks**：`beforeToolCall` / `afterToolCall` / `transformContext` / `prepareNextTurn` / `shouldStopAfterTurn` / `getApiKey` / `getSteeringMessages` / `getFollowUpMessages`。
+5. **Session tree**：append-only `SessionTreeEntry`（10 种 type 的 union），每条带 id/parentId，leaf 可移动 = 分支切换；compaction 是 entry，branch_summary 是 entry。**transcript 是树不是 list**。
+6. **Harness 阶段机**：`phase: "idle" | "turn" | "compaction" | "branch_summary" | "retry"`，结构性操作要求 idle，运行时配置 setter 在 turn 中允许，下一 turn 的 snapshot 才生效。
+
+文件切分：每一层各自一份 types.ts + 一份核心实现 + utility 子目录。`src/` 顶层是 transport-agnostic 内核，`src/harness/env/nodejs.ts` 隔离所有 Node-only 依赖。
+
+---
+
+## 2. 优点（值得 tau 借鉴）
+
+### 2.1 stream-injectable-as-test-seam
+
+- **是什么**：低层 `runAgentLoop(prompts, context, config, emit, signal, streamFn?)` 把 LLM 调用收成一个**可注入参数** `streamFn: StreamFn`（`agent-loop.ts:91-104`、`agent-loop.ts:255` `streamFunction = streamFn || streamSimple`）。
+
+  ```ts
+  // agent-loop.ts:255
+  const streamFunction = streamFn || streamSimple;
+  // ...
+  const response = await streamFunction(config.model, llmContext, { ...config, apiKey, signal });
+  ```
+
+  测试 `test/agent-loop.test.ts:99-105` 直接传一个返回 `MockAssistantStream` 的 streamFn，整套 loop 跑起来不需要任何 vitest mock：
+
+  ```ts
+  const streamFn = () => {
+      const stream = new MockAssistantStream();
+      queueMicrotask(() => stream.push({ type: "done", reason: "stop", message }));
+      return stream;
+  };
+  ```
+
+  Harness 测试用 `registerFauxProvider() + fauxAssistantMessage()`（来自 pi-ai），protocol 层级的 fake，更真实。
+
+- **为什么真好**：硬命中**可测试性**。我 grep 了所有 `test/harness/*.ts`，**0 处** 包含 `vi.fn`/`vi.mock`/`stub`/`spy`（`grep -c "vi\.fn|mock|stub|spy"` 结果 0）。`agent-loop.test.ts` 出现 41 次 "mock"，全是命名（`MockAssistantStream` 是 stub class），没有 vitest 的 mock setup。**没有 mock 噩梦 = 设计真的解耦**。
+
+- **tau 是否借鉴**：**是**。把 LLM 调用收成一个接口（Go 里就是一个 `Streamer interface`）作为构造参数，不是从 import 拉默认实现。再配合一个 in-package 的 faux streamer 给所有测试用。
+
+---
+
+### 2.2 prepare-vs-execute-split (compaction)
+
+- **是什么**：`compaction.ts:455` `prepareCompaction(entries, settings)` 是**纯函数同步**返回 `Result<CompactionPreparation | undefined, CompactionError>`，不调 LLM；`compaction.ts:603` `compact(preparation, model, apiKey, ...)` 才真正请求 LLM 出 summary。Harness 在中间加了一个 hook：
+
+  ```ts
+  // agent-harness.ts:782-797
+  const preparation = preparationResult.value;
+  const hookResult = await this.emitHook({
+      type: "session_before_compact", preparation, branchEntries, customInstructions, signal,
+  });
+  if (hookResult?.cancel) throw new AgentHarnessError("compaction", "Compaction cancelled");
+  const provided = hookResult?.compaction;
+  const compactResult = provided
+      ? { ok: true, value: provided }
+      : await compact(preparation, model, ...);
+  ```
+
+  Hook 可以返回 `cancel` 取消、或返回 `compaction` 完全替换实现。
+
+- **为什么真好**：硬命中**可演化性 + 抽象不漏 + 错误路径地位**。
+  - 可演化性：换 summarization 提示词只需 hook（不必 fork loop）；换 summarization model（用便宜的）只需 hook；甚至塞个本地 LLM 都行。
+  - 抽象不漏：使用者只看到 "preparation → result"；`findCutPoint` 算法的细节不暴露。
+  - 错误路径：`Result<T, CompactionError>` + `CompactionError.code: "aborted" | "summarization_failed" | "invalid_session"` 是 first-class，不是 throw。
+
+- **tau 是否借鉴**：**是**。任何"决策 + 执行"耦合的子系统都值得这样拆。Go 里就是 `Prepare(...) (Plan, error)` + `Execute(plan, ...) (Result, error)`，加个 `Hook` 接口拦截 plan→result 之间。
+
+---
+
+### 2.3 result-sum-type-with-error-codes
+
+- **是什么**：`harness/types.ts:5-25`：
+
+  ```ts
+  export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
+  export function ok<...>(value): Result<...> { return { ok: true, value }; }
+  export function err<...>(error): Result<...> { return { ok: false, error }; }
+  export function getOrThrow<...>(result): TValue { ... }
+  ```
+
+  + 6 个具体 error class（`FileError`、`ExecutionError`、`CompactionError`、`BranchSummaryError`、`SessionError`、`AgentHarnessError`），每个带 `code: <stable-string-union>` 字段：
+
+  ```ts
+  // harness/types.ts:104
+  export type FileErrorCode = "aborted" | "not_found" | "permission_denied"
+                            | "not_directory" | "is_directory" | "invalid"
+                            | "not_supported" | "unknown";
+  ```
+
+  分层规则（`docs/agent-harness.md:24-29`）：低层"capability/helper"（fs、shell、compaction helper、resource loader）返回 `Result`，高层"orchestration"（Session、AgentHarness）throw `*Error`。
+
+- **为什么真好**：硬命中**错误路径地位 + 抽象不漏**。
+  - 错误是 first-class：调用 fs 操作不能"忘了 catch"，类型强制处理 ok/err。
+  - 错误码稳定字符串：跨边界（包→包→应用）匹配错误用 `error.code === "aborted"`，不是 `instanceof` + 字符串匹配。
+  - 高低层分明：在底层不必每个 helper 都设计 throw 语义；在高层用户拿到带 code 的 typed error。
+
+- **tau 是否借鉴**：**是，但 Go 天然就是这个方向**——`(T, error)` 配 `var ErrXxx = errors.New(...)` + `errors.Is/As`。要严格做的是：(a) 每个子系统定一个 error 类型常量集，(b) 跨子系统别无脑 `fmt.Errorf("%w")` 包到没法识别。
+
+---
+
+### 2.4 transcript-as-tree-not-list
+
+- **是什么**：`harness/types.ts:289-373` `SessionTreeEntry` 是 10 种 entry 的 union（`message` / `thinking_level_change` / `model_change` / `compaction` / `branch_summary` / `custom` / `custom_message` / `label` / `session_info` / `leaf`），每条 `parentId: string | null`。Leaf 是当前活跃位置，`session.moveTo(entryId, summary?)` 切分支：
+
+  ```ts
+  // session/session.ts:217-238
+  async moveTo(entryId: string | null, summary?: {...}): Promise<string | undefined> {
+      if (entryId !== null && !(await this.storage.getEntry(entryId))) throw ...;
+      await this.storage.setLeafId(entryId);
+      if (!summary) return undefined;
+      return this.appendTypedEntry({ type: "branch_summary", parentId: entryId, ... });
+  }
+  ```
+
+  `compaction` 不是"删除旧 messages"，是**插入一条 compaction entry，记录 firstKeptEntryId**；`buildSessionContext` 重放时遇到 compaction 就用 summary 替代它之前的 entries（`session/session.ts:55-69`）。
+
+- **为什么真好**：硬命中**可演化性**。
+  - 切换 / 编辑历史 = 移动 leaf，原始 history 不丢。
+  - Compaction 可逆向回滚（删 compaction entry 即可），retry 容易。
+  - 多分支并存（可同时 maintain "尝试 A" 和 "尝试 B"）。
+  - Rebuild context 是纯函数 `buildSessionContext(entries: SessionTreeEntry[]): SessionContext`，可缓存、可在测试里 round-trip。
+
+- **tau 是否借鉴**：**是**。这是个 underrated 的好设计。tau 应该一开始就把 session 当 append-only 树，不要等"用户要 rewind/branch"才补。
+
+---
+
+### 2.5 process-isolation-by-construction
+
+- **是什么**：我在 `src/` 全树 grep `process\.` / `globalThis` / `process.cwd` —— 0 处。所有 Node-specific 代码集中在一个文件 `src/harness/env/nodejs.ts`（5 处 `process.platform/process.env`），通过 `ExecutionEnv` 接口（`harness/types.ts:226+`）注入。`AgentHarnessOptions.env: ExecutionEnv` 是必填构造参数（`agent-harness.ts:184`）。
+
+  ```ts
+  // src/index.ts 没有 export Node 实现
+  // src/node.ts 是单独入口（package.json exports "./node"）
+  ```
+
+- **为什么真好**：硬命中**会话隔离 + 隐式状态/全局**。
+  - 多个 AgentHarness 实例之间无任何共享 mutable 全局。
+  - 浏览器/Bun/Deno/WASI 都能跑，只要实现 `ExecutionEnv`。
+  - 测试可以塞 in-memory env，零 fs 副作用。
+
+- **tau 是否借鉴**：**是**。Go 同样要纪律：core 包不许 import `os.Getenv` / `os.Args` / `runtime.NumCPU` 等环境读取；统一通过一个 `Env interface { Getenv, Cwd, ExecCmd, FS fs.FS, ... }` 注入。**应该在最早的 lint 规则里加这一条**（`go vet -tags=noenv` 或自定义 analyzer）。
+
+---
+
+### 2.6 parallel-tool-execution-with-deterministic-order
+
+- **是什么**：`agent-loop.ts:362-413` `executeToolCallsParallel`：preflight（参数校验 + beforeToolCall）**串行**做，已经 finalized 的"immediate"结果按顺序 emit `tool_execution_end`；剩余真要 execute 的拿到一个 `() => Promise<...>` 排好顺序后 `Promise.all` 并发跑；**toolResult message** emit 时按 `assistantMessage.content` 的源顺序，不按完成顺序：
+
+  ```ts
+  // agent-loop.ts:402-413
+  const orderedFinalizedCalls = await Promise.all(
+      finalizedCalls.map((entry) => (typeof entry === "function" ? entry() : Promise.resolve(entry))),
+  );
+  for (const finalized of orderedFinalizedCalls) {
+      const toolResultMessage = createToolResultMessage(finalized);
+      await emitToolResultMessage(toolResultMessage, emit);
+  }
+  ```
+
+  per-tool `executionMode: "sequential"` 可以**整批**降级回 sequential（`agent-loop.ts:331-335`）。
+
+- **为什么真好**：硬命中**并发/会话隔离 + 可演化性**。
+  - 完成顺序事件 vs 持久化顺序事件**分离明确**：UI 看 completion order，session 看 source order。这是细致的边界。
+  - 单个 tool 声明 sequential 即可强制全局降级——不需要全局开关。
+
+- **tau 是否借鉴**：**是但要改造**。Go 用 `errgroup` + 收集 + 重新按 source-order 排序。**改造点**：pi 这版 `await Promise.all` **没有取消传播**——一个 tool fail 不会取消其它（看 `executePreparedToolCall:567` 单独 catch）。tau 应该用 `errgroup.WithContext` 让 fail 同时取消未完成的 tool，或者明确设计为"全部跑完再汇总"——挑一个，写在 spec 里。
+
+---
+
+## 3. 缺点 / 架构债（tau 必须避免）
+
+### 3.1 dual-high-level-wrapper-divergence
+
+- **是什么**：`Agent` 类（`agent.ts:557 lines`） 和 `AgentHarness` 类（`agent-harness.ts:995 lines`）是**两个并列**的高层封装，**都直接 import `runAgentLoop`** 自己干活，不互相依赖。
+
+  - `agent.ts:381` `runAgentLoop(messages, context, loopConfig, (event) => this.processEvents(event), signal, this.streamFn)`
+  - `agent-harness.ts:447` `runAgentLoop(messages, this.createContext(...), this.createLoopConfig(...), (event) => this.handleAgentEvent(event, ...), abortController.signal, this.createStreamFn(...))`
+
+  两边各自实现：lifecycle (`runWithLifecycle` vs `startRunPromise`+`finishRun`)、failure message （`agent.ts:417` `handleRunFailure` vs `agent-harness.ts:46` `createFailureMessage`，几乎完全相同的代码）、abort controller、queue（`PendingMessageQueue` vs `steerQueue/followUpQueue/nextTurnQueue`）、event reduction 等等。
+
+  作者已经知道这个问题：`docs/agent-harness.md` 有一节 "Remove `Agent` dependency from `AgentHarness`"——做完了，但**反向迁移没做**。`Agent` 现在是 harness 的**穷人版**，不是 harness 用 Agent 实现。
+
+- **为什么是债**：**复杂度膨胀 + 行为漂移**。两份 turn-end 的处理、两份 abort 的边界。bug 修一边漏一边，新 feature 加一边漏一边。AgentHarness 的 `nextTurnQueue` 在 Agent 里就没有；Agent 的 `prepareNextTurn` 退化签名（见下条）在 Harness 里就没退化。
+  - **加权证据**：harness 测试和 agent 测试是分开两套 vitest config（`vitest.config.ts` vs `vitest.harness.config.ts`，见 `package.json:scripts`）。强制两边都测，因为不能假设一边的行为代表另一边。
+
+- **tau 必须如何避免**：**只做一个**高层包装。如果非要分层，就是"低层 loop = 协议机器" + "高层 harness = 持久化/编排"，**Agent 那种'in-memory only'的中间层不必存在**。tau 的应用层（CLI/server/TUI）在最末端做"我不需要 session 持久化"的退化，而不是中间多一层。
+
+---
+
+### 3.2 loop-internal-mirror-is-invisible-exhaust
+
+> **修正记录**：本节原版（"agent-loop 直接 mutate 调用方 context.messages"）经 Q5 取证后判定**事实错误** —— `runAgentLoop:104-107` 实际做了完整 spread copy，loop 不 mutate 调用方对象。但底层债依然存在，机制不同：loop 自维护一份隐式 transcript mirror。下面是修正版。
+
+- **是什么**：`runAgentLoop` 入口处显式 copy 了输入：
+
+  ```ts
+  // agent-loop.ts:103-107
+  const newMessages: AgentMessage[] = [...prompts];
+  const currentContext: AgentContext = {
+      ...context,
+      messages: [...context.messages, ...prompts],   // ← 真 spread copy
+  };
+  ```
+
+  之后整个 loop 在这个**内部副本** `currentContext.messages` 上 push/splice 累积——包括 streaming 时把 partial assistant message push 进去、再随每个 delta `splice` 替换为新的 partial、最后替换为 final（`agent-loop.ts:317, 333, 346, 348, 361, 363`）：
+
+  ```ts
+  // agent-loop.ts:317（每次 streaming start）
+  context.messages.push(partialMessage);
+  // agent-loop.ts:333（每次 delta）
+  context.messages[context.messages.length - 1] = partialMessage;
+  ```
+
+  这份 mirror **不通过返回值暴露**——`runAgentLoop` 返回的是平行收集的 `newMessages`（`agent-loop.ts:103, 186, 213` 各处独立 push）。Mirror 的**唯一 reader 是 loop 自己**：下一 turn 的 `transformContext` 输入用的就是它（`agent-loop.ts:283` `let messages = context.messages`，这个 `context` 是内部 `currentContext`）。
+
+- **为什么是债**：**隐式状态作为公共契约**（命中 6 准则第 4 条的微观版）。
+  - **两份独立 transcript bookkeeping**：调用方拿不到 loop 内部 mirror，必须自己 subscribe events 重建一份（`agent.ts:489` `_state.messages.push(event.message)` 在 `message_end` 时累积）。如果调用方漏 subscribe 或 subscribe 顺序错了，他的 transcript 和 loop 内部不一致。
+  - **类型不表达**：`AgentContext.messages` 类型签名只是普通数组，没有任何东西暗示"loop 会基于它的副本维护一份你看不见的 mirror，并把这份 mirror 当作 next-turn transformContext 的 input"。
+  - **没有干净的扩展点**：如果使用者想让 next-turn 的 `transformContext` 看到的是**他自己的持久化 transcript**（比如经过 compaction 后的 session messages），而非 loop 自维护的累积 mirror——**没有 hook 可以替换 mirror**，必须改 loop 本身。pi 的 `prepareNextTurn` 部分缓解了这个（可以替换 context），但需要使用者自己每 turn 都 explicitly 替换，否则就用 mirror。**这正是 §3.4 退化签名问题让事情更糟的原因**：Agent 把 prepareNextTurn 信息阉割了，使用者更难做这种替换。
+
+- **tau 必须如何避免**：**单一真相源**。Loop 不维护内部 transcript mirror；transformContext / next-turn 的输入显式来自"调用方传入的 transcript provider"。Go 里：
+
+  ```go
+  type Transcript interface {
+      Messages() []Message       // 当前快照
+      Append(Message) error      // 追加（会持久化）
+  }
+  type LoopConfig struct {
+      Transcript Transcript      // 注入，loop 自己不存
+      // ...
+  }
+  ```
+
+  Loop 通过 `Transcript.Append` 把新 message 交回；下一 turn 调 `Transcript.Messages()` 拿最新快照。这样：(a) 调用方的持久化层就是真相源，(b) compaction/branch 切换天然生效（transcript 实现自己处理），(c) 没有"看不见的 mirror"。
+
+---
+
+### 3.3 hook-context-signal-is-fake
+
+- **是什么**：`agent-harness.ts:782, 814, 834` 三处给 hook 传 signal：
+
+  ```ts
+  // agent-harness.ts:782
+  const hookResult = await this.emitHook({
+      type: "session_before_compact",
+      ...,
+      signal: new AbortController().signal,   // ← 一次性、永远不 abort
+  });
+  ```
+
+  这个 `new AbortController().signal` 立即拿了 signal 但 **`AbortController` 实例丢弃了** —— 没人能调 `.abort()`。`SessionBeforeCompactEvent.signal: AbortSignal`（`harness/types.ts:469`）的类型签名说"hook 收到一个 abort signal"，但实际语义是"一个永远不会 fire 的 signal"。Hook 实现者如果 `if (signal.aborted) return` —— 永远不会触发。如果他用 `fetch(url, { signal })` —— 永远不会被取消。
+
+  类似的还有 `agent-harness.ts:826`（branch summary hook）、`agent-harness.ts:837`（generateBranchSummary 调用）。
+
+- **为什么是债**：**类型在撒谎 + 错误路径地位假**。这是教科书级"运行时约定 vs 静态类型不一致"。最糟的是这种类型只能靠**读源码**才能发现 —— 测试不会发现，因为没人在 hook 里真的用 signal。
+
+- **tau 必须如何避免**：
+  1. 字段名说"signal"就必须真的能 abort。要么传**当前 turn 的真 signal**（首选），要么**根本不暴露这个字段**（如果当前阶段不允许取消）。
+  2. 类型层面：如果 phase 不允许取消，让事件类型里**没有 signal 字段**；如果允许，确保拿到的 controller 真的能控制。
+  3. 写一个 lint："`new AbortController().signal` 直接传出去且 controller 不存"= 错误。
+
+---
+
+### 3.4 agent-prepareNextTurn-degraded-signature
+
+- **是什么**：低层 `AgentLoopConfig.prepareNextTurn` 接收完整上下文：
+
+  ```ts
+  // types.ts:177
+  prepareNextTurn?: (
+      context: PrepareNextTurnContext,   // { message, toolResults, context, newMessages }
+  ) => AgentLoopTurnUpdate | undefined | Promise<...>;
+  ```
+
+  高层 `Agent` 把它退化成只收 signal：
+
+  ```ts
+  // agent.ts:101
+  prepareNextTurn?: (
+      signal?: AbortSignal,             // ← 信息全丢
+  ) => Promise<AgentLoopTurnUpdate | undefined> | ...;
+  ```
+
+  转换在 `agent.ts:430`：
+
+  ```ts
+  prepareNextTurn: this.prepareNextTurn
+      ? async () => await this.prepareNextTurn?.(this.signal)
+      : undefined,
+  ```
+
+  Loop 提供的 message/toolResults/context/newMessages **被丢弃**。Agent 用户拿不到 turn 之后的状态信息。
+
+- **为什么是债**：**API 退化、抽象漏底反向**。高层应该比低层简单（OK），但**不应该比低层信息更少**。如果用户想用 prepareNextTurn 切模型基于"刚才哪条 toolResult fail 了"——必须直接绕过 Agent 用 `agentLoop()`。这破坏了"高层 = 低层 + 持久化"的层级关系。同样的退化在 AgentHarness 里没有（`agent-harness.ts:411` 用了 setTurnState 闭包绕过去）。
+
+- **tau 必须如何避免**：**高层接口签名要么 ⊇ 低层，要么明确解释为什么砍**。如果是为了简化默认场景，那低层签名应该作为 escape hatch 暴露出来（"详见 `agentLoop()`"）。tau 一开始就只做一个层（见 3.1），自然不会有这问题。
+
+---
+
+### 3.5 emit-hook-pretends-to-be-reducer
+
+- **是什么**：`agent-harness.ts:209-225` `emitHook`：
+
+  ```ts
+  let lastResult: AgentHarnessEventResultMap[TType] | undefined;
+  for (const handler of handlers) {
+      const result = await handler(event);
+      if (result !== undefined) lastResult = result;
+  }
+  return lastResult;
+  ```
+
+  典型的"last writer wins"：注册第二个 handler 直接覆盖第一个。**但 `before_provider_request` 和 `before_provider_payload` 是真 chain**（`agent-harness.ts:235-273` 用 `applyStreamOptionsPatch` 累积）。同一个 `emitHook` 入口、两套 reduce 语义、按 event type 区分——**调用者无法静态判断**他注册的 hook 是 chain 还是 last-wins。
+
+  作者承认了：`docs/agent-harness.md:309-321` 说 "Move result chaining out of `AgentHarness` into reducer functions" —— **没做完**。
+
+- **为什么是债**：**模式名喊得响（"hook"）但语义不一致**。两个用户同时给同一个 event 注册 hook 的行为是 unspecified（取决于 type）。debug 起来恶心。
+
+- **tau 必须如何避免**：**每个 hook 点显式声明 reducer**："这里是 last-wins"或"这里是 fold(prev, new)"。Go 里直接每个事件 一个明确签名的接口方法（不要泛型 emitHook）：
+
+  ```go
+  type Hooks interface {
+      BeforeToolCall(...) (block bool, reason string, err error)  // first-blocks-wins, 显式
+      TransformContext(prev []Message) ([]Message, error)         // chain
+      // ...
+  }
+  ```
+
+---
+
+### 3.6 phase-state-machine-is-incomplete
+
+- **是什么**：`docs/agent-harness.md` 的 Implementation Todo 节列了 `AgentHarness` 当前**未解决**的问题，节录：
+
+  > - Finalize phase/idle semantics.
+  > - Audit whether `settled` can fire too early.
+  > - Make session writes inside `settled` callbacks deterministic.
+  > - Audit follow-up behavior around `agent_end`.
+  > - Implement auto-compaction decision point.
+  > - Implement retry handling.
+  > - Audit `abort()` barrier semantics.
+
+  这些不是 nice-to-have——是**核心生命周期未定**。比如 `phase: "retry"` 在 union 里（`harness/types.ts:381`），但 grep `"retry"` 在 agent-harness.ts 中只在 type 定义里出现一次，**没有任何赋值**。retry phase 是**死类型**。
+
+  另一个例子：`abort()` 实现（`agent-harness.ts:932-961`）先 abort signal、再 emit `queue_update`、再 `await waitForIdle`、**再** emit `abort` 事件。`abort` 事件**晚于** `agent_end` 和 `settled`。这与"abort 是前置事件"的直觉相反。
+
+- **为什么是债**：**错误路径地位 + 隐式状态**。一个 5-state 的 state machine 在 995 行的类里铺开，没有集中的转换函数；状态进入靠 `this.phase = "turn"`，离开靠 `this.phase = "idle"` 散落多处。已知"phase 语义未定"还在出货——不靠谱信号。
+
+- **tau 必须如何避免**：
+  1. 状态机用一个 explicit 的 transition function 集中表达（Go 里 `switch oldPhase, event` 一个文件）；
+  2. dead state 不要塞进 union（`retry` 不实现就别留）；
+  3. **不要在文档里把"未实现"和"已实现"用 todo 列表混在同一个 doc**——作者自己没分清，使用者更糊涂；
+  4. 抢在 v1 锁定前明确：abort 是 pre-event 还是 post-event；compaction 是同步阻塞还是后台。
+
+---
+
+### 3.7 createErrorToolResult-loses-type
+
+- **是什么**：`agent-loop.ts:710` `createErrorToolResult`：
+
+  ```ts
+  function createErrorToolResult(message: string): AgentToolResult<any> {
+      return {
+          content: [{ type: "text", text: message }],
+          details: {},   // ← 替换为空对象
+      };
+  }
+  ```
+
+  但 `AgentToolResult<TDetails>.details: TDetails`（`types.ts:399`）。错误情况下 `TDetails` 被悄悄替换成 `{}`。下游 `afterToolCall` 拿到 `result.details` 类型签名是 `TDetails`，但运行时可能是 `{}`。
+
+- **为什么是债**：**类型在撒谎（轻度）**。是个小坑，但模式很坏：错误路径偷偷打破成功路径的类型契约。
+
+- **tau 必须如何避免**：错误结果应该是**不同的 sum-type 分支**，不是同一个 struct 把 details 偷换。Go：
+
+  ```go
+  type ToolOutcome struct {
+      Result  *ToolResult  // 二选一，TS 里就是 discriminated union
+      Err     *ToolError
+  }
+  ```
+
+---
+
+### 3.8 streaming-message-double-bookkeeping
+
+- **是什么**：assistant message 在 streaming 时：
+  1. `agent-loop.ts:259-282` 把 partial 直接 push 到 `context.messages`，每个 delta `splice` 替换最后一个；
+  2. emit `message_update` 事件；
+  3. 最终 `done`/`error` 时 splice 替换为 final message + emit `message_end`；
+  4. **`agent.ts:489` 的 `processEvents` 在 `message_end` 时 `_state.messages.push(event.message)`**。
+
+  这意味着：loop 内部修改了 `currentContext.messages`（用 slice 来的副本，外部不可见），同时 message 又通过事件流入 state。**两套 bookkeeping 各跑一遍**。如果调用方直接用低层 `agentLoop()` 而**不监听 message_end**，他拿不到 message（除非 result()）；如果同时监听 message_end **和** 读 `context.messages`，他看到 partial 和 final 的中间状态。
+
+- **为什么是债**：**抽象漏底**。低层 loop 暴露了"我会改你的 context"的副作用，高层 Agent 又靠 event 重建。**两套真相源**。
+
+- **tau 必须如何避免**：**单一真相源**。要么 loop 完全不 touch 外部 context，state 用 events 重建；要么 loop 拥有 mutable state，外部不读 context。挑一个，写死。
+
+---
+
+## 4. 灰色地带（双面性）
+
+### 4.1 callback-hooks-must-not-throw
+
+- **决策**：`AgentLoopConfig` 多个 callback（`convertToLlm`、`transformContext`、`getApiKey`、`getSteeringMessages`、`getFollowUpMessages`、`shouldStopAfterTurn`、`prepareNextTurn`）的 jsdoc 都写"**Contract: must not throw or reject**" (`types.ts:142, 170, 184, 197, 210` 等)。
+- **优面**：错误路径明确——loop 不必对每个 callback 包 try/catch；callback 作者被强制返回安全 fallback。
+- **缺面**：契约**只在 jsdoc 里**，类型签名是 `(...) => Promise<T>`，TypeScript 不强制。callback 作者真的 throw 了就**炸 loop**——`agent-loop.ts:226` `transformContext` 调用没 try/catch，`agent-loop.ts:230` `convertToLlm` 同样。`beforeToolCall` 倒是包了（`agent-loop.ts:651-720` 整个 prepareToolCall try/catch），不一致。
+- **trade-off**：契约纪律换 loop 简洁。
+- **tau 怎么决策**：**类型层面表达"不会失败"**。Go 里 callback 直接定义为 `func(...) T`（没 error 返回值），调用方就明白要内化错误。或者全部 `(T, error)`，loop 显式处理。**不要靠 jsdoc 约束**——一年后接手的人不读 jsdoc。
+
+---
+
+### 4.2 declaration-merging-for-custom-message-types
+
+- **决策**：`types.ts:269-278` `interface CustomAgentMessages {}` 让 app 用 `declare module "@earendil-works/pi-agent-core" { interface CustomAgentMessages { foo: ... } }` 注入自定义消息类型。`AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages]`。
+- **优面**：单一 `AgentMessage` 类型贯穿，app 不必到处 type-cast；`convertToLlm` 桥接到 LLM。
+- **缺面**：**全局染色**——同一进程多个用户用不同 declaration merging 会互相打架。多 package 协作时谁能扩 `CustomAgentMessages`？答案是任何 import 这个 package 的代码。Go 不允许这种东西，是优势。
+- **trade-off**：表达力 vs 卫生。
+- **tau 怎么决策**：**Go 没有 declaration merging，天然走另一条路**。建议用 `interface AgentMessage { kind() string }` + 应用层定义自己的类型，再注入一个 `Converter func(AgentMessage) ([]LLMMessage, bool)` 给 loop 调用。**不要试图模仿这个**——Go 的 type 系统不适合，会做得更难看。
+
+---
+
+### 4.3 typebox-schema-as-tool-parameter
+
+- **决策**：`AgentTool<TParameters extends TSchema>`（`types.ts:402`）用 typebox（`Type.Object({...})`）做参数 schema，运行时 `validateToolArguments` 校验，静态 `Static<TParameters>` 推 execute 参数类型。
+- **优面**：一处声明、运行时 + 编译时**同时生效**；模型也能拿到 JSON Schema 给 LLM。可演化性好。
+- **缺面**：**typebox 是依赖**——`package.json` 里直接 `"typebox": "1.1.38"`（pinned）。每个 tool 作者必须学 typebox DSL；schema 从 zod/io-ts/openapi 来的话还要桥。
+- **trade-off**：类型一致性 vs DSL 锁定。
+- **tau 怎么决策**：Go 里**没有等价的 typebox**。常见是：(a) `reflect` 从 struct tag 自动生成 JSON schema（标准库 + 一点工具），(b) 手写 schema + 手写 struct 一一对应。我建议 (a)，类似 `kong`/`go-jsonschema-generator` 的路子，让 tool 定义就是一个 Go struct，schema 自动出。
+
+---
+
+### 4.4 fat-event-union-for-extensibility
+
+- **决策**：`AgentHarnessOwnEvent` 是 18 种事件的 union（`harness/types.ts:520-540`），harness 自己 emit 全部。订阅者一个 listener 收所有事件、自己 switch on `event.type`。
+- **优面**：扩展性好——加事件不破坏接口；TypeScript discriminated union 推断完美。
+- **缺面**：使用方 switch 全枚举（很长），漏一种事件 TypeScript 不会报错（如果 `default` 写错），实际用 `as never` 才能强制；事件多了之后**事件本身的契约**也是模糊的——`save_point` 之后 `settled` 之前 phase 是什么？只有 docs 说。
+- **trade-off**：扩展性 vs 严格性。
+- **tau 怎么决策**：Go 用 `interface { eventTag() }` + 多个 struct 类型实现的 sum 模拟。**问题不在 union——问题在事件之间的时序契约没用类型表达**。tau 应该明确写一个"事件序列"图（甚至机器可验证的状态机），订阅者在文档之外有规范可查。
+
+---
+
+## 5. 我没把握 / 我假设了什么
+
+> 强制护栏。这些是我心里 ≤80% 把握的点。
+
+1. **没读完 jsonl-storage.ts / branch-summarization.ts / proxy.ts 大部分** — 我对 session 持久化的"flush 顺序 / fsync 保证 / 崩溃恢复"做了**乐观假设**："看起来作者考虑了顺序"（`docs/durable-harness.md` 是 planned，没读源码）。可能有更多隐式 invariant。
+
+2. **`prepareNextTurn` 在 Agent 里"信息全丢"的影响**（3.4） — 我假设这是 API 退化的债。但**有可能**作者刻意这样：让 Agent 用户**只能**用简化签名，复杂场景下沉到 AgentHarness。如果是后者，这是 trade-off 不是债。我没找证据，只看到代码事实。
+
+3. **"两个高层包装并列"是债（3.1）** — 我对这个 80% 把握。**但**：两个测试套件（vitest.config + vitest.harness.config）的存在说明作者是**故意**在维持两套 entry point。可能是因为 Agent 是 browser-friendly（无 fs/Node deps），AgentHarness 是 Node-only（依赖 ExecutionEnv）。如果是这个原因，**Agent 不可被 harness 替代**。我**没**深读 `Agent` 的 Node 依赖性来确认这一点。
+
+4. **测试覆盖** — 我数了 mock 用法（grep 结果），但**没真的跑测试**，没看 coverage。"测试干净"的判断基于"setup 简单 + 用 faux provider"两个间接信号。如果实际 coverage 不高，"易测"是假象。`docs/agent-harness.md` 自己提到 `coverage:harness` 命令，说明在跑 coverage——但我没看数字。
+
+5. **Compaction 算法的正确性** — `findCutPoint` + split-turn 处理我读了一遍，**逻辑看起来对**，但没构造测试用例验证边界（空 entries、全 toolResult、连续 compaction）。我对它"细致"的判断基于代码风格。
+
+6. **类型撒谎候选的影响范围** — 3.3（fake signal）、3.7（lost details）我都给了精确位置，但**没估计影响范围**：有多少现存 hook 实现真的依赖 signal？details? 我假设"少"（pi-mono 内部使用），可能错。
+
+7. **我跳过了 hooks.md / observability.md / durable-harness.md** — 主线判断不靠它们，但**它们里可能有更多"未实现"的债**。如果 tau coordinator 想要更全面的"作者承诺 vs 实际状态"对比，需要补读。
+
+8. **我没拿 docs/01..09 做导航** — 按红线要求执行了。**有可能** docs/01..09 提到的某些细节我自己读源码漏掉了。比如 streaming 协议、proxy 编码细节、specific error code 含义。如果 coordinator 想交叉印证，可以让另一个 agent 回头对一遍。
+
+---
+
+*报告完。建议下游 builder/coordinator 优先关注 §3.1/3.2/3.6（核心架构债），§2.1/2.4/2.5（必带借鉴），§4.1/4.3（Go 实现时要做的方向选择）。*
