@@ -50,7 +50,7 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode && !*webuiMode {
+	if prompt == "" && !*tuiMode {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -110,16 +110,6 @@ func main() {
 	}
 
 	loop := core.NewLoop()
-
-	// WebUI mode: launch HTTP+WebSocket server, skip batch loop.
-	if *webuiMode {
-		srv := webui.NewServer(*addr, wsRoot, *model, prov)
-		if err := srv.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "webui: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
 
 	// TUI mode: launch Bubble Tea, skip batch loop.
 	if *tuiMode {

@@ -13,7 +13,6 @@ import (
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/coding"
 	"github.com/akzj/tau/pkg/tui"
-	"github.com/akzj/tau/pkg/webui"
 	"github.com/akzj/tau/providers/anthropic-messages"
 	"github.com/akzj/tau/providers/openai-completions"
 )
@@ -27,8 +26,6 @@ func main() {
 	noTools := flag.Bool("no-tools", false, "Disable all tools")
 	maxTurns := flag.Int("max-turns", 10, "Max agent turns")
 	tuiMode := flag.Bool("tui", false, "Launch Terminal UI")
-	webuiMode := flag.Bool("webui", false, "Launch Web UI")
-	addr := flag.String("addr", ":8080", "Web UI listen address")
 	flag.Parse()
 
 	// Resolve workspace
@@ -50,7 +47,7 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode && !*webuiMode {
+	if prompt == "" && !*tuiMode {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -110,16 +107,6 @@ func main() {
 	}
 
 	loop := core.NewLoop()
-
-	// WebUI mode: launch HTTP+WebSocket server, skip batch loop.
-	if *webuiMode {
-		srv := webui.NewServer(*addr, wsRoot, *model, prov)
-		if err := srv.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "webui: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
 
 	// TUI mode: launch Bubble Tea, skip batch loop.
 	if *tuiMode {

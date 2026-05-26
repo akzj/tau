@@ -1,0 +1,54 @@
+package webui
+
+import (
+	"embed"
+	"fmt"
+	"net/http"
+	"os"
+
+	"github.com/gorilla/websocket"
+	"github.com/akzj/tau/core"
+)
+
+//go:embed templates/*
+var templateFS embed.FS
+
+// Server handles HTTP and WebSocket connections for the tau web UI.
+type Server struct {
+	addr      string
+	workspace string
+	model     string
+	provider  core.Provider
+	upgrader  websocket.Upgrader
+}
+
+// NewServer creates a webui server.
+func NewServer(addr, workspace, model string, prov core.Provider) *Server {
+	return &Server{
+		addr:      addr,
+		workspace: workspace,
+		model:     model,
+		provider:  prov,
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool { return true },
+		},
+	}
+}
+
+// Start begins listening.
+func (s *Server) Start() error {
+	http.HandleFunc("/", s.handleIndex)
+	http.HandleFunc("/ws", s.handleWebSocket)
+	fmt.Fprintf(os.Stderr, "tau webui: http://%s\n", s.addr)
+	return http.ListenAndServe(s.addr, nil)
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	data, err := templateFS.ReadFile("templates/index.html")
+	if err != nil {
+		http.Error(w, "template not found", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
+}
