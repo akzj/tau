@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -61,7 +60,7 @@ func (s *Server) Start() error {
 		srv.Shutdown(ctx)
 	}()
 
-	fmt.Fprintf(os.Stderr, "tau webui: http://%s\n", s.addr)
+	core.Info("webui: listening", "addr", s.addr)
 	return srv.ListenAndServe()
 }
 

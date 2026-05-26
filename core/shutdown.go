@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -56,7 +55,7 @@ func (s *ShutdownState) Shutdown() {
 	go func() {
 		select {
 		case <-time.After(10 * time.Second):
-			fmt.Fprintf(os.Stderr, "tau: shutdown timed out, forcing exit\n")
+			Warn("shutdown: timed out, forcing exit")
 		case <-s.done:
 		}
 		close(s.done)
@@ -69,11 +68,11 @@ func SignalHandler(s *ShutdownState) {
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	fmt.Fprintf(os.Stderr, "tau: received signal, shutting down...\n")
+	Info("shutdown: signal received")
 	s.Shutdown()
 	go func() {
 		<-sig // second signal
-		fmt.Fprintf(os.Stderr, "tau: second signal, forcing exit\n")
+		Warn("shutdown: second signal, forcing exit")
 		os.Exit(1)
 	}()
 	signal.Stop(sig)

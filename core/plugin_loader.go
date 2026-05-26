@@ -59,7 +59,7 @@ func Discover() error {
 
 		ep, err := startPlugin(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "plugin: cannot start %s: %v\n", e.Name(), err)
+			Warn("plugin start failed", "name", e.Name(), "err", err)
 			continue
 		}
 		RegisterPlugin(ep)

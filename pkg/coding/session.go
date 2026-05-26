@@ -3,7 +3,6 @@ package coding
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -113,9 +112,9 @@ cs.Hooks.BeforeToolCall.Add(func(ctx context.Context, ev core.ToolCallEvent) (co
 			if args, ok := ev.Args.(map[string]any); ok {
 				if cmd, ok := args["command"].(string); ok {
 					if blocked, msg := tools.CheckGitCommand(cmd); blocked {
-						fmt.Fprintf(os.Stderr, "  [git safety] BLOCKED: %s\n", msg)
+						core.Warn("git safety blocked", "reason", msg)
 					} else if msg != "" {
-						fmt.Fprintf(os.Stderr, "  [git safety] WARNING: %s\n", msg)
+						core.Warn("git safety warning", "reason", msg)
 					}
 				}
 			}
@@ -126,14 +125,14 @@ cs.Hooks.BeforeToolCall.Add(func(ctx context.Context, ev core.ToolCallEvent) (co
 			if args, ok := ev.Args.(map[string]any); ok {
 				if path, ok := args["file_path"].(string); ok {
 					if strings.Contains(path, ".git/") {
-						fmt.Fprintf(os.Stderr, "  [git safety] WARNING: modifying git internal: %s\n", path)
+						core.Warn("git safety warning", "path", path)
 					}
 				}
 			}
 		}
 
 		// Destructive tools: bash/write/edit — log and allow for now
-		fmt.Fprintf(os.Stderr, "  [gate] allowing %s\n", ev.ToolName)
+		core.Debug("tool gate", "tool", ev.ToolName)
 		return ev, nil
 	})
 	// BeforeCompaction: summarise old messages when transcript gets too large
@@ -177,14 +176,14 @@ cs.Hooks.BeforeToolCall.Add(func(ctx context.Context, ev core.ToolCallEvent) (co
 	// BeforeAgentStart: log turn start
 	cs.Hooks.BeforeAgentStart = core.NewLastWins[core.AgentStartRequest]()
 	cs.Hooks.BeforeAgentStart.Observe(func(ctx context.Context, req core.AgentStartRequest) {
-		fmt.Fprintf(os.Stderr, "  [turn %d] %s\n", req.Turn, req.Input)
+		core.Debug("session: turn start", "turn", req.Turn, "input", req.Input)
 	})
 
 	// AfterToolResult: log tool completion
 	cs.Hooks.AfterToolResult = core.NewChain[core.ToolResultWithError]()
 	cs.Hooks.AfterToolResult.Add(func(ctx context.Context, ev core.ToolResultWithError) (core.ToolResultWithError, error) {
 		if ev.Err != nil {
-			fmt.Fprintf(os.Stderr, "  [tool error] %s: %v\n", ev.CallID, ev.Err)
+			core.Warn("tool error", "callID", ev.CallID, "err", ev.Err)
 		}
 		return ev, nil
 	})
