@@ -66,6 +66,7 @@ type Session struct {
 	YesMode       bool                // --yes mode (skip all confirmation)
 	Strategy      AgentStrategy       // pluggable reasoning strategy
 	SkillLoader   *SkillLoader        // skill loader (lazy init in loop)
+	StreamUI      chan<- StreamEvent   // nil = non-streaming mode
 	ctx           context.Context
 	cancel        context.CancelFunc
 }

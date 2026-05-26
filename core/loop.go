@@ -350,6 +350,43 @@ func (r *Run) Cancel() {
 	r.sess.Cancel()
 }
 
+// processStreamEvents handles a simplified streaming path (no tool execution).
+// Used when sess.StreamUI is configured for real-time token delivery.
+func (r *Run) processStreamEvents(ctx context.Context, events <-chan StreamEvent, req StreamRequest) {
+	defer r.doneOnce.Do(func() { close(r.done) })
+	defer close(r.events)
+
+	turnID := generateID()
+	r.events <- TurnStart{Timestamp_: timeNow(), TurnID: turnID}
+	msgID := generateMsgID()
+	r.events <- MessageStart{Timestamp_: timeNow(), MessageID: msgID, Role: RoleAssistant}
+
+	for ev := range events {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		switch ev.Type {
+		case StreamDelta:
+			if r.sess.StreamUI != nil {
+				select {
+				case r.sess.StreamUI <- ev:
+				default:
+				}
+			}
+			r.events <- MessageDelta{Timestamp_: timeNow(), MessageID: msgID, ContentDelta: ev.Content}
+		case StreamError:
+			r.events <- ErrorEvent{Timestamp_: timeNow(), Err: ev.Err}
+		case StreamDone:
+			r.events <- MessageEnd{Timestamp_: timeNow(), MessageID: msgID}
+		}
+	}
+
+	r.events <- TurnEnd{Timestamp_: timeNow(), TurnID: turnID, Reason: string(ReasonComplete)}
+}
+
 // processProviderEvents transforms raw ProviderEvents into AgentEvents
 // and handles tool call execution loop.
 func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan ProviderEvent, req StreamRequest) {
