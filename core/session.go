@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -49,6 +50,7 @@ type Session struct {
 	ActiveTools   []string        // if non-empty, only these tools are sent to LLM
 	EventBus      *EventBus       // event subscription system
 	Summary       string          // carries compaction summary between turns
+	CWD           string          // working directory at session creation
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
@@ -56,6 +58,7 @@ type Session struct {
 // NewSession creates a new Session.
 func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	sessCtx, cancel := context.WithCancel(ctx)
+	cwd, _ := os.Getwd()
 	s := &Session{
 		ID:           SessionID(generateID()),
 		Transcript:   NewTranscript(),
@@ -66,6 +69,7 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		Provider:     opts.Provider,
 		DefaultModel: opts.DefaultModel,
 		EventBus:     NewEventBus(),
+		CWD:          cwd,
 		ctx:          sessCtx,
 		cancel:       cancel,
 	}

@@ -70,9 +70,9 @@ func main() {
 			fmt.Println("No saved sessions.")
 			return
 		}
-		fmt.Printf("%-20s %-12s %s\n", "ID", "MSGS", "FIRST MESSAGE")
+		fmt.Printf("%-20s %-12s %-30s %s\n", "ID", "MSGS", "CWD", "FIRST MESSAGE")
 		for _, s := range sessions {
-			fmt.Printf("%-20s %-12d %s\n", s.ID, s.MsgCount, s.FirstMsg)
+			fmt.Printf("%-20s %-12d %-30s %s\n", s.ID, s.MsgCount, s.CWD, s.FirstMsg)
 		}
 		return
 	}
@@ -231,6 +231,7 @@ func main() {
 	} else if *verbose {
 		fmt.Fprintf(os.Stderr, "[saved %s] (%d messages)\n", sessionID, len(msgs))
 	}
+	persist.SaveCWD(sessionID, wsRoot) // non-fatal
 
 	fmt.Println()
 }

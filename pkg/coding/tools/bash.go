@@ -24,6 +24,10 @@ type bashPrepared struct {
 // bashThreePhase implements core.ThreePhaseTool for bash.
 type bashThreePhase struct{}
 
+func (b *bashThreePhase) PrepareArgsRaw(rawArgs json.RawMessage) (json.RawMessage, error) {
+	return rawArgs, nil // pass-through: bash handles JSON args directly
+}
+
 func (b *bashThreePhase) Prepare(ctx context.Context, callID string, params any) (core.PreparedTool, error) {
 	var args struct {
 		Command        string `json:"command"`

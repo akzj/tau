@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/akzj/tau/core"
 )
@@ -12,6 +13,10 @@ type toolThreePhase struct {
 	prepare  func(ctx context.Context, callID string, params any) (core.PreparedTool, error)
 	execute  func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error)
 	finalize func(ctx context.Context, prepared core.PreparedTool, result core.ToolResult) error
+}
+
+func (t *toolThreePhase) PrepareArgsRaw(rawArgs json.RawMessage) (json.RawMessage, error) {
+	return rawArgs, nil // default: pass-through
 }
 
 func (t *toolThreePhase) Prepare(ctx context.Context, callID string, params any) (core.PreparedTool, error) {

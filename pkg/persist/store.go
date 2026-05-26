@@ -32,6 +32,7 @@ type SessionInfo struct {
 	CreatedAt time.Time
 	MsgCount  int
 	FirstMsg  string // first user message (truncated to 80 chars)
+	CWD       string // working directory
 }
 
 // Save writes the transcript messages to a JSONL file.
@@ -110,6 +111,7 @@ func List() ([]SessionInfo, error) {
 		info := SessionInfo{
 			ID:       id,
 			MsgCount: len(msgs),
+			CWD:      LoadCWD(id),
 		}
 		// Get first user message
 		for _, m := range msgs {
@@ -138,4 +140,23 @@ func List() ([]SessionInfo, error) {
 // NewID generates a session ID based on timestamp.
 func NewID() string {
 	return time.Now().Format("20060102-150405")
+}
+
+// SaveCWD writes the CWD for a session.
+func SaveCWD(id, cwd string) error {
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, id+".cwd"), []byte(cwd), 0644)
+}
+
+// LoadCWD reads the CWD for a session.
+func LoadCWD(id string) string {
+	dir, err := Dir()
+	if err != nil {
+		return ""
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, id+".cwd"))
+	return string(data)
 }

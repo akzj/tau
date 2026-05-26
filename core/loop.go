@@ -279,7 +279,13 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 						if tool, ok := r.sess.Tools.Get(tc.ToolName); ok {
 							// Detect three-phase tool
 							if tp := tool.ThreePhase; tp != nil {
-								prepared, err := tp.Prepare(ctx, tc.CallID, json.RawMessage(tc.Args))
+								raw := json.RawMessage(tc.Args)
+								raw, err := tp.PrepareArgsRaw(raw)
+								if err != nil {
+									results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+									return
+								}
+								prepared, err := tp.Prepare(ctx, tc.CallID, raw)
 								if err != nil {
 									results[idx] = toolResult{tc.CallID, ToolResult{}, err}
 									return

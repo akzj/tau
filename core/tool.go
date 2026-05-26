@@ -56,6 +56,10 @@ type PreparedTool struct {
 // Loop detects this interface and uses the three-phase path;
 // otherwise falls back to single-stage Tool.Execute.
 type ThreePhaseTool interface {
+	// PrepareArgsRaw validates/transforms raw LLM args before Prepare.
+	// Returns the (possibly transformed) raw args for Prepare.
+	PrepareArgsRaw(rawArgs json.RawMessage) (json.RawMessage, error)
+
 	// Prepare validates inputs and returns a PreparedTool.
 	// Called synchronously in the event loop.
 	Prepare(ctx context.Context, callID string, params any) (PreparedTool, error)
