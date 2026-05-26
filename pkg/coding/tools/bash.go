@@ -29,13 +29,26 @@ var gitDestructiveOps = []struct {
 	{"git clean -fdx", true, "force clean including ignored"},
 	{"git commit --amend", false, "amend commit"},
 	{"git rebase --hard", true, "hard rebase"},
-}// bashPrepared holds validated params for the bash three-phase flow.
+}
+
+// CheckGitCommand checks a command string against gitDestructiveOps.
+// Returns (blocked, message) — blocked=true means the command should be rejected.
+func CheckGitCommand(cmd string) (blocked bool, msg string) {
+	cmdLower := strings.TrimSpace(cmd)
+	for _, op := range gitDestructiveOps {
+		if strings.Contains(cmdLower, op.pattern) {
+			return op.block, op.message
+		}
+	}
+	return false, ""
+}
+
+// bashPrepared holds validated params for the bash three-phase flow.
 type bashPrepared struct {
 	Command        string
 	WorkDir        string
 	TimeoutSeconds int
 }
-
 // bashThreePhase implements core.ThreePhaseTool for bash.
 type bashThreePhase struct{}
 
