@@ -487,6 +487,15 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 					}
 					pendingToolResults = append(pendingToolResults, toolMsg)
 
+					// Memory: add tool result to working memory
+					if r.sess.Memory != nil {
+						for _, content := range tr.result.Content {
+							if content.Type == "text" {
+								r.sess.Memory.AddObservation("tool:"+tr.toolName, content.Text, 0.5)
+							}
+						}
+					}
+
 					// Track pending writes from write/edit tools
 					if tr.toolName == "write" || tr.toolName == "edit" {
 						if tr.result.Details != nil {
@@ -522,6 +531,13 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 			if _, ok := toolCallBuf[pe.ToolCallID]; !ok {
 				toolCallBuf[pe.ToolCallID] = &toolCallAccum{name: pe.ToolName}
 			}
+			// Memory: recall relevant episodes for tool context
+			if r.sess.Memory != nil {
+				episodes := r.sess.Memory.RecallEpisodes(pe.ToolName, 3)
+				if len(episodes) > 0 {
+					toolCallBuf[pe.ToolCallID].memoryContext = formatEpisodes(episodes)
+				}
+			}
 			r.events <- ToolCallStart{
 				Timestamp_: timeNow(),
 				CallID:     pe.ToolCallID,
@@ -551,6 +567,13 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 		case ProvError:
 			r.events <- ErrorEvent{Timestamp_: timeNow(), Err: pe.Err, Code: ErrProvider}
 			r.sess.EventBus.Emit(Event{Type: EvtError, Payload: pe.Err.Error()})
+			// Memory: record error episode
+			if r.sess.Memory != nil {
+				r.sess.Memory.RecordEpisode(
+					pe.Err.Error(), "error occurred", "unresolved",
+					"error during operation", []string{"error"},
+				)
+			}
 
 		case ProvThinkingDelta:
 			r.events <- ThinkingDelta{Timestamp_: timeNow(), Content: pe.ContentDelta}
