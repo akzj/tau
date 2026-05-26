@@ -41,10 +41,6 @@ func main() {
 		Description: "Echo back the input message.",
 		Schema:      toolspec.EchoToolSchema{},
 		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
-			// Handle nil params
-			if params == nil {
-				return core.ToolResult{Content: []core.Content{{Type: "text", Text: "ECHO: (nil params)"}}}, nil
-			}
 			// Loop passes json.RawMessage as params
 			var raw json.RawMessage
 			switch v := params.(type) {
