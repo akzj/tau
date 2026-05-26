@@ -75,6 +75,24 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		})
 	}
 
+	// Inject pending writes as context
+	if len(sess.PendingWrites) > 0 {
+		var parts []string
+		for path, content := range sess.PendingWrites {
+			preview := content
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			parts = append(parts, fmt.Sprintf("%s: %s", path, preview))
+		}
+		ctxMsg := Message{
+			Role:      RoleSystem,
+			Content:   "[Pending file changes]\n" + strings.Join(parts, "\n"),
+			MessageID: generateMsgID(),
+		}
+		sess.Transcript.Append(ctxMsg)
+	}
+
 	// 2. Build system prompt
 	systemPrompt := ""
 	if sess.SystemPrompt != nil {
@@ -357,9 +375,10 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 			// Execute pending tools — parallel first, then sequential
 			if len(pendingToolCalls) > 0 {
 				type toolResult struct {
-					callID string
-					result ToolResult
-					err    error
+					callID   string
+					toolName string
+					result   ToolResult
+					err      error
 				}
 				results := make([]toolResult, len(pendingToolCalls))
 
@@ -386,13 +405,13 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 							raw := json.RawMessage(tc.Args)
 							raw, err := tp.PrepareArgsRaw(raw)
 							if err != nil {
-								results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+								results[idx] = toolResult{tc.CallID, tc.ToolName, ToolResult{}, err}
 								return
 							}
 							r.sess.EventBus.Emit(Event{Type: EvtToolPrepare, Payload: tc.ToolName})
 							prepared, err := tp.Prepare(ctx, tc.CallID, raw)
 							if err != nil {
-								results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+								results[idx] = toolResult{tc.CallID, tc.ToolName, ToolResult{}, err}
 								return
 							}
 							result, err := tp.Execute(ctx, prepared, func(pr PartialResult) {
@@ -402,7 +421,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 								// Log but don't override result error
 							}
 							r.sess.EventBus.Emit(Event{Type: EvtToolFinalize, Payload: tc.ToolName})
-							results[idx] = toolResult{tc.CallID, result, err}
+							results[idx] = toolResult{tc.CallID, tc.ToolName, result, err}
 						} else {
 							// Fallback: single-stage Tool.Execute
 							var params any
@@ -411,7 +430,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 								var err error
 								params, err = tool.PrepareArgs(raw)
 								if err != nil {
-									results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+									results[idx] = toolResult{tc.CallID, tc.ToolName, ToolResult{}, err}
 									return
 								}
 							}
@@ -421,10 +440,10 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 							result, err := tool.Execute(ctx, tc.CallID, params, func(pr PartialResult) {
 								r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
 							})
-							results[idx] = toolResult{tc.CallID, result, err}
+							results[idx] = toolResult{tc.CallID, tc.ToolName, result, err}
 						}
 					} else {
-						results[idx] = toolResult{tc.CallID, ToolResult{}, fmt.Errorf("tool not found: %s", tc.ToolName)}
+						results[idx] = toolResult{tc.CallID, tc.ToolName, ToolResult{}, fmt.Errorf("tool not found: %s", tc.ToolName)}
 					}
 				}
 
@@ -469,6 +488,15 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 						MessageID:  generateMsgID(),
 					}
 					pendingToolResults = append(pendingToolResults, toolMsg)
+
+					// Track pending writes from write/edit tools
+					if tr.toolName == "write" || tr.toolName == "edit" {
+						if tr.result.Details != nil {
+							if path, ok := tr.result.Details["path"].(string); ok && path != "" {
+								r.sess.PendingWrites[path] = resultText(tr.result)
+							}
+						}
+					}
 				}
 			}
 

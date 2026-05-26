@@ -51,6 +51,7 @@ type Session struct {
 	EventBus      *EventBus       // event subscription system
 	Summary       string          // carries compaction summary between turns
 	CWD           string          // working directory at session creation
+	PendingWrites map[string]string // path → confirmed content (latest write/edit)
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
