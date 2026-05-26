@@ -121,6 +121,19 @@ func main() {
 		doctorCommand(flag.Args()[1:])
 		return
 	}
+	if flag.NArg() > 0 && flag.Arg(0) == "completion" {
+		shell := "bash"
+		if len(flag.Args()) > 1 {
+			shell = flag.Args()[1]
+		}
+		script, err := core.GenerateCompletion(core.ShellType(shell))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "completion: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(script)
+		return
+	}
 
 	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools && !*listSkills && !*versionFlag {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
