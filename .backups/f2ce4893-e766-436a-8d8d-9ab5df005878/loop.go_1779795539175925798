@@ -79,7 +79,10 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	}
 
 	req := StreamRequest{
-		Model:        sess.DefaultModel,
+		Model: ModelSpec{
+			Name: "gpt-5.4",
+			API:  WireOpenAICompletions,
+		},
 		Messages:     sess.Transcript.Messages(),
 		Tools:        toolSpecs,
 		SystemPrompt: systemPrompt,
@@ -140,7 +143,10 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 	// 3. Build stream request from current transcript (already has tool results)
 	// TODO: hardcoded model — demo only uses one provider
 	req := StreamRequest{
-		Model:        sess.DefaultModel,
+		Model: ModelSpec{
+			Name: "gpt-5.4",
+			API:  WireOpenAICompletions,
+		},
 		Messages:     sess.Transcript.Messages(),
 		Tools:        toolSpecs,
 		SystemPrompt: systemPrompt,

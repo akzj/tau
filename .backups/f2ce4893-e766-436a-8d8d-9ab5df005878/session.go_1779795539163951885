@@ -44,7 +44,6 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		Hooks:        &HookSet{},
 		SystemPrompt: opts.SystemPrompt,
 		Provider:     opts.Provider,
-		DefaultModel: opts.DefaultModel,
 		ctx:          sessCtx,
 		cancel:       cancel,
 	}

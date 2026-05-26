@@ -15,8 +15,7 @@ type SystemPromptFn func(sess *Session) (string, error)
 // SessionOptions configures a new Session.
 type SessionOptions struct {
 	SystemPrompt SystemPromptFn
-	Provider     Provider   // direct provider reference for demo simplicity
-	DefaultModel ModelSpec  // default model for Loop turns
+	Provider     Provider // direct provider reference for demo simplicity
 }
 
 // Session is the unit of isolation. All mutable state lives here.
@@ -28,7 +27,6 @@ type Session struct {
 	Hooks        *HookSet
 	SystemPrompt SystemPromptFn
 	Provider     Provider
-	DefaultModel ModelSpec
 	ctx          context.Context
 	cancel       context.CancelFunc
 }
@@ -44,7 +42,6 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		Hooks:        &HookSet{},
 		SystemPrompt: opts.SystemPrompt,
 		Provider:     opts.Provider,
-		DefaultModel: opts.DefaultModel,
 		ctx:          sessCtx,
 		cancel:       cancel,
 	}

@@ -27,6 +27,10 @@ func main() {
 	// 2. Create session
 	sess, err := core.NewSession(ctx, core.SessionOptions{
 		Provider: prov,
+		DefaultModel: core.ModelSpec{
+			Name: "claude-sonnet-4-6",
+			API:  core.WireAnthropicMessages,
+		},
 		SystemPrompt: func(s *core.Session) (string, error) {
 			return "You are a helpful assistant. Use tools when needed.", nil
 		},

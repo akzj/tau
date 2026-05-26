@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -8,7 +10,7 @@ import (
 	"time"
 
 	"github.com/akzj/tau/core"
-	openai_completions "github.com/akzj/tau/providers/openai-completions"
+	anthropic_messages "github.com/akzj/tau/providers/anthropic-messages"
 	"github.com/akzj/tau/toolspec"
 )
 
@@ -16,7 +18,7 @@ func main() {
 	ctx := context.Background()
 
 	// 1. Create provider
-	prov, err := openai_completions.NewOpenAICompletionsProvider()
+	prov, err := anthropic_messages.NewAnthropicMessagesProvider()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "provider: %v\n", err)
 		os.Exit(1)
@@ -25,10 +27,6 @@ func main() {
 	// 2. Create session
 	sess, err := core.NewSession(ctx, core.SessionOptions{
 		Provider: prov,
-		DefaultModel: core.ModelSpec{
-			Name: "gpt-5.4",
-			API:  core.WireOpenAICompletions,
-		},
 		SystemPrompt: func(s *core.Session) (string, error) {
 			return "You are a helpful assistant. Use tools when needed.", nil
 		},
@@ -77,14 +75,14 @@ func main() {
 	sess.Providers.RegisterProvider("default", prov)
 
 	// 4. Multi-turn: Prompt → Continue
-	fmt.Println("=== tau demo: multi-turn echo ===")
+	fmt.Println("=== tau demo: Anthropic multi-turn echo ===")
 	fmt.Println()
 
 	loop := core.NewLoop()
 
 	// --- Turn 1: user asks to use echo tool ---
 	fmt.Println("--- Turn 1: Prompt ---")
-	run1, err := loop.Prompt(ctx, sess, core.UserInput{Text: "Please use the echo tool with message 'hello tau'"})
+	run1, err := loop.Prompt(ctx, sess, core.UserInput{Text: "Please use the echo tool with message 'hello anthropic'"})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "prompt: %v\n", err)
 		os.Exit(1)
