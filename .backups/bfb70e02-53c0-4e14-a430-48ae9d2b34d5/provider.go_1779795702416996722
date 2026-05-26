@@ -229,14 +229,11 @@ func buildAnthropicMessages(messages []core.Message) []map[string]any {
 			msg["content"] = content
 
 		case m.Role == core.RoleTool:
-			msg = map[string]any{
-				"role": "user",
-				"content": []map[string]any{{
-					"type":        "tool_result",
-					"tool_use_id": m.ToolCallID,
-					"content":     m.Content,
-				}},
-			}
+			msg["content"] = []map[string]any{{
+				"type":         "tool_result",
+				"tool_use_id":  m.ToolCallID,
+				"content":      m.Content,
+			}}
 
 		default:
 			msg["content"] = m.Content
