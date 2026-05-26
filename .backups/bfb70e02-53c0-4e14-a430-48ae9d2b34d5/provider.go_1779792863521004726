@@ -306,15 +306,15 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 					}
 				}
 
-			}
-			// Emit tool call end when the choice has finish_reason
-			if choice.FinishReason == "tool_calls" {
-				for _, tcid := range startedToolCalls {
-					fmt.Fprintf(os.Stderr, "[DEBUG] emit ProvToolCallEnd: id=%s\n", tcid)
-					events <- core.ProviderEvent{
-						Type:       core.ProvToolCallEnd,
-						MessageID:  msgID,
-						ToolCallID: tcid,
+				// Emit tool call end when the choice has finish_reason
+				if choice.FinishReason == "tool_calls" {
+					for _, tcid := range startedToolCalls {
+						fmt.Fprintf(os.Stderr, "[DEBUG] emit ProvToolCallEnd: id=%s\n", tcid)
+						events <- core.ProviderEvent{
+							Type:       core.ProvToolCallEnd,
+							MessageID:  msgID,
+							ToolCallID: tcid,
+						}
 					}
 				}
 			}

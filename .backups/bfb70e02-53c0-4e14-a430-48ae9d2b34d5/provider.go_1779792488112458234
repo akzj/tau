@@ -294,7 +294,6 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 							ToolName:   tc.Function.Name,
 						}
 						startedToolCalls = append(startedToolCalls, toolCallID)
-						fmt.Fprintf(os.Stderr, "[DEBUG] emit ProvToolCallStart: id=%s name=%s\n", toolCallID, tc.Function.Name)
 					}
 					if tc.Function.Arguments != "" {
 						events <- core.ProviderEvent{
@@ -306,15 +305,14 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 					}
 				}
 
-			}
-			// Emit tool call end when the choice has finish_reason
-			if choice.FinishReason == "tool_calls" {
-				for _, tcid := range startedToolCalls {
-					fmt.Fprintf(os.Stderr, "[DEBUG] emit ProvToolCallEnd: id=%s\n", tcid)
-					events <- core.ProviderEvent{
-						Type:       core.ProvToolCallEnd,
-						MessageID:  msgID,
-						ToolCallID: tcid,
+				// Emit tool call end when the choice has finish_reason
+				if choice.FinishReason == "tool_calls" {
+					for _, tcid := range startedToolCalls {
+						events <- core.ProviderEvent{
+							Type:       core.ProvToolCallEnd,
+							MessageID:  msgID,
+							ToolCallID: tcid,
+						}
 					}
 				}
 			}
@@ -323,7 +321,6 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 
 	// Emit final events
 	if msgID != "" {
-		fmt.Fprintf(os.Stderr, "[DEBUG] emit ProvMessageEnd: id=%s\n", msgID)
 		events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
 	}
 
@@ -333,8 +330,6 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 		events <- core.ProviderEvent{Type: core.ProvMessageStart, MessageID: msgID}
 		events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
 	}
-
-	fmt.Fprintf(os.Stderr, "[DEBUG] parseSSE done, closing events channel\n")
 }
 
 // --- message building ---
