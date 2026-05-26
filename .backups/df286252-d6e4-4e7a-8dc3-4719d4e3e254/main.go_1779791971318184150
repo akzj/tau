@@ -39,7 +39,7 @@ func main() {
 	sess.Tools.Register(core.Tool{
 		Name:        "echo",
 		Description: "Echo back the input message.",
-		Schema:      toolspec.EchoToolSchema{},
+		Schema:      echoSchema,
 		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			// Loop passes json.RawMessage as params
 			var raw json.RawMessage
