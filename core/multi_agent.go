@@ -128,6 +128,7 @@ type SubAgentPool struct {
 	mu      sync.Mutex
 	results map[string]SubAgentResult
 	pending map[string]<-chan SubAgentResult
+	memory  *MemorySystem // optional: for memory integration
 }
 
 // NewSubAgentPool creates a pool for managing sub-agents.
@@ -150,6 +151,11 @@ func (p *SubAgentPool) Spawn(spec SubAgentSpec) error {
 		return err
 	}
 	p.pending[spec.ID] = ch
+	// Memory: record sub-agent dispatch (Node 4)
+	if p.memory != nil {
+		p.memory.AddObservation("orchestrator",
+			fmt.Sprintf("sub-agent dispatched: %s (budget: %d turns)", spec.ID, spec.Budget), 0.6)
+	}
 	return nil
 }
 
@@ -170,5 +176,26 @@ func (p *SubAgentPool) Collect(ctx context.Context) ([]SubAgentResult, error) {
 		}
 		results = append(results, result)
 	}
+	// Memory: record sub-agent results (Node 5)
+	if p.memory != nil {
+		for _, result := range results {
+			prefix := "sub-agent:" + result.ID
+			if result.Err != nil {
+				p.memory.AddObservation(prefix,
+					fmt.Sprintf("error: %s", result.Err.Error()), 0.7)
+			} else {
+				p.memory.AddObservation(prefix,
+					fmt.Sprintf("completed: %s", truncateStrOutput(result.Output)), 0.7)
+			}
+		}
+	}
 	return results, nil
+}
+
+
+func truncateStrOutput(s string) string {
+	if len(s) > 200 {
+		return s[:200] + "..."
+	}
+	return s
 }
