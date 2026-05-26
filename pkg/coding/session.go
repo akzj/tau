@@ -82,18 +82,41 @@ func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSe
 	})
 
 	// BeforeToolCall: permission gate for destructive operations
-	cs.Hooks.BeforeToolCall.Add(func(ctx context.Context, ev core.ToolCallEvent) (core.ToolCallEvent, error) {
+cs.Hooks.BeforeToolCall.Add(func(ctx context.Context, ev core.ToolCallEvent) (core.ToolCallEvent, error) {
 		// Read-only tools: always allowed
 		switch ev.ToolName {
 		case "read", "glob", "grep", "task":
 			return ev, nil
 		}
 
+		// Git safety for bash commands
+		if ev.ToolName == "bash" {
+			if args, ok := ev.Args.(map[string]any); ok {
+				if cmd, ok := args["command"].(string); ok {
+					if blocked, msg := tools.CheckGitCommand(cmd); blocked {
+						fmt.Fprintf(os.Stderr, "  [git safety] BLOCKED: %s\n", msg)
+					} else if msg != "" {
+						fmt.Fprintf(os.Stderr, "  [git safety] WARNING: %s\n", msg)
+					}
+				}
+			}
+		}
+
+		// Git internal file protection for write/edit
+		if ev.ToolName == "write" || ev.ToolName == "edit" {
+			if args, ok := ev.Args.(map[string]any); ok {
+				if path, ok := args["file_path"].(string); ok {
+					if strings.Contains(path, ".git/") {
+						fmt.Fprintf(os.Stderr, "  [git safety] WARNING: modifying git internal: %s\n", path)
+					}
+				}
+			}
+		}
+
 		// Destructive tools: bash/write/edit — log and allow for now
 		fmt.Fprintf(os.Stderr, "  [gate] allowing %s\n", ev.ToolName)
 		return ev, nil
 	})
-
 	// BeforeCompaction: summarise old messages when transcript gets too large
 	cs.Hooks.BeforeCompaction = core.NewLastWins[core.CompactionRequest]()
 	cs.Hooks.BeforeCompaction.Set(func(ctx context.Context, req core.CompactionRequest) (*core.CompactionRequest, error) {
