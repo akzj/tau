@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/persist"
-	"github.com/akzj/tau/pkg/provider"
 )
 
 // Update implements tea.Model.
@@ -39,12 +38,40 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+m":
-			modelReg, _ := provider.LoadModelRegistry()
-			var lines []string
-			for _, info := range modelReg.List("") {
-				lines = append(lines, fmt.Sprintf("%s (%s) %d ctx", info.ID, info.Provider, info.ContextWindow))
+			if len(m.models) > 0 {
+				m.modelIdx = (m.modelIdx + 1) % len(m.models)
+				m.status = fmt.Sprintf("model: %s", m.models[m.modelIdx])
 			}
-			m.messages = append(m.messages, line{Role: "system", Content: "Models:\n" + strings.Join(lines, "\n")})
+			return m, nil
+
+		case "ctrl+r":
+			sessions, err := persist.List()
+			if err == nil && len(sessions) > 0 {
+				msgs, err := persist.Load(sessions[0].ID)
+				if err == nil {
+					for _, msg := range msgs {
+						role := string(msg.Role)
+						m.messages = append(m.messages, line{Role: role, Content: msg.Content})
+					}
+					m.status = "resumed " + sessions[0].ID
+					return m, nil
+				}
+			}
+			m.status = "no sessions to resume"
+			return m, nil
+
+		case "ctrl+n":
+			m.messages = nil
+			m.streaming = ""
+			m.tools = make(map[string]toolState)
+			m.turnCount = 0
+			m.scrollOffset = 0
+			m.status = "new session"
+			return m, nil
+
+		case "ctrl+p":
+			m.providerIdx = (m.providerIdx + 1) % len(m.providers)
+			m.status = fmt.Sprintf("provider: %s", m.providers[m.providerIdx])
 			return m, nil
 
 		case "ctrl+t":
@@ -80,6 +107,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Width = msg.Width - 4
 		if m.input.Width < 10 {
 			m.input.Width = 10
+		}
+		return m, nil
+
+	case tea.MouseMsg:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			maxScroll := len(m.messages) - 1
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			if m.scrollOffset < maxScroll {
+				m.scrollOffset++
+			}
+			return m, nil
+		case tea.MouseWheelDown:
+			if m.scrollOffset > 0 {
+				m.scrollOffset--
+			}
+			return m, nil
 		}
 		return m, nil
 

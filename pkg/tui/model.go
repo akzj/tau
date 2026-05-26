@@ -89,6 +89,11 @@ type model struct {
 	activeTools   []string // current active tool set
 	fileTree      *FileTree // file operations in this session
 	showFiles     bool      // Ctrl+T toggle: show file tree sidebar
+	providers     []string  // available provider IDs
+	providerIdx   int       // current provider index
+	models        []string  // available model IDs for current provider
+	modelIdx      int       // current model index
+	scrollOffset  int       // mouse wheel scroll offset (lines scrolled up)
 }
 
 // turnCompleteMsg signals the turn loop finished.
@@ -122,6 +127,11 @@ func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string) 
 		initialPrompt: initialPrompt,
 		fileTree:      NewFileTree(),
 		showFiles:     false,
+		providers:     []string{"openai", "anthropic", "google", "azure", "mistral", "bedrock", "vertex"},
+		providerIdx:   0,
+		models:        []string{"gpt-5.4", "gpt-4o", "gpt-4o-mini", "gpt-4", "o1", "o1-mini"},
+		modelIdx:      0,
+		scrollOffset:  0,
 	}
 }
 

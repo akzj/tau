@@ -75,8 +75,15 @@ func main() {
 	// --list-skills: print available skills and exit
 	if *listSkills {
 		builtins := []string{
+			// Built-in (8)
 			"code-review", "debugger", "test-writer", "refactor", "architect",
 			"go-refactor", "shell-scripting", "git-workflow",
+			// Go (4)
+			"go-code-review", "go-debugging", "go-test-writing", "go-refactoring",
+			// Python (4)
+			"python-code-review", "python-debugging", "python-test-writing", "python-refactoring",
+			// JS (4)
+			"js-code-review", "js-debugging", "js-test-writing", "js-refactoring",
 		}
 		fmt.Println("Available skills (built-in):")
 		for _, s := range builtins {

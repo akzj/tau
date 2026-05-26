@@ -81,7 +81,16 @@ func (tt *TaskTracker) List() []TaskEntry {
 	return result
 }
 
-// TaskTrackerTool creates a task tracking tool.
+// TaskTrackerTool creates an enhanced task tracking tool with status workflow.
+//
+// Parameters:
+//   action  (string, required) — one of: "create", "update", "list"
+//   task_id (string, required for update) — the task identifier
+//   title   (string, required for create) — task description
+//   status  (string, optional, for update) — one of: "pending", "in_progress", "completed", "cancelled"
+//
+// Tasks are stored in-memory and scoped to session via GlobalTaskTracker.
+// Status icons: [ ] pending, [▸] in_progress, [✓] completed, [✗] cancelled.
 func TaskTrackerTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",

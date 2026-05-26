@@ -13,7 +13,18 @@ import (
 	"github.com/akzj/tau/core"
 )
 
-// GrepTool creates a regex-search tool.
+// GrepTool creates a regex search tool.
+//
+// Parameters:
+//   pattern       (string, required) — regex pattern to search for
+//   path          (string, required) — file or directory path to search
+//   include       (string, optional) — file glob filter (e.g., "*.go")
+//   context_lines (int, optional, default 0) — number of surrounding lines to show
+//   ignore_case   (bool, optional, default false) — case-insensitive matching
+//   n             (int, optional, default 100) — maximum number of results
+//
+// Returns matches in "file:line: content" format.
+// Binary files are detected and skipped with a note.
 func GrepTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",
@@ -70,12 +81,12 @@ func GrepTool() core.Tool {
 		},
 		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
-				Pattern      string
-				Path         string
-				Include      string
-				N            int
-				ContextLines int
-				IgnoreCase   bool
+				Pattern      string `json:"pattern"`
+				Path         string `json:"path"`
+				Include      string `json:"include"`
+				N            int    `json:"n"`
+				ContextLines int    `json:"context_lines"`
+				IgnoreCase   bool   `json:"ignore_case"`
 			}
 			raw, _ := json.Marshal(prepared.Params)
 			json.Unmarshal(raw, &args)

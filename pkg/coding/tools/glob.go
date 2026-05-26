@@ -11,7 +11,15 @@ import (
 	"github.com/akzj/tau/core"
 )
 
-// GlobTool creates a file-globbing tool.
+// GlobTool creates a file pattern matching tool.
+//
+// Parameters:
+//   pattern  (string, required) — glob pattern (e.g., "**/*.go", "*.md")
+//   work_dir (string, optional, default: workspace root) — search root directory
+//   max_depth (int, optional, default 10) — maximum directory depth for ** patterns
+//
+// Returns matching file paths relative to workspace root.
+// Results are capped at 200 matches. Symlinks are skipped with a note.
 func GlobTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",
@@ -56,9 +64,9 @@ func GlobTool() core.Tool {
 		},
 		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
-				Pattern  string
-				WorkDir  string
-				MaxDepth int
+				Pattern  string `json:"pattern"`
+				WorkDir  string `json:"work_dir"`
+				MaxDepth int    `json:"max_depth"`
 			}
 			raw, _ := json.Marshal(prepared.Params)
 			json.Unmarshal(raw, &args)

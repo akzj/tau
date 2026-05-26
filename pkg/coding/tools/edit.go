@@ -13,6 +13,15 @@ import (
 )
 
 // EditTool creates a find-and-replace editing tool.
+//
+// Parameters:
+//   file_path (string, required) — workspace-relative path to the file to edit
+//   old       (string, required) — exact text to find and replace
+//   new       (string, required) — replacement text
+//   n         (int, optional, default -1 = all) — maximum number of replacements
+//
+// Creates a backup in .tau-backups/ before modifying the file.
+// Returns the number of replacements made.
 func EditTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",
@@ -55,10 +64,10 @@ func EditTool() core.Tool {
 		},
 		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
-				FilePath string
-				Old      string
-				New      string
-				N        int
+				FilePath string `json:"file_path"`
+				Old      string `json:"old"`
+				New      string `json:"new"`
+				N        int    `json:"n"`
 			}
 			raw, _ := json.Marshal(prepared.Params)
 			json.Unmarshal(raw, &args)

@@ -195,7 +195,16 @@ func (b *bashThreePhase) Finalize(ctx context.Context, prepared core.PreparedToo
 	return nil
 }
 
-// BashTool creates a bash-execution tool.
+// BashTool creates a bash command execution tool.
+//
+// Parameters:
+//   command         (string, required) — the bash command to execute
+//   work_dir        (string, optional, default: workspace root) — working directory for the command
+//   timeout_seconds (int, optional, default 30, max 120) — command timeout in seconds
+//
+// Environment is restricted to a whitelist (PATH, HOME, SHELL, USER).
+// Output is capped at 64KiB. Exit code, signal, and timeout are reported.
+// Destructive git operations (push --force, reset --hard, clean -fd) are blocked.
 func BashTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",

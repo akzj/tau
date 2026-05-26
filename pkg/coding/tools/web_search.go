@@ -12,7 +12,13 @@ import (
 	"github.com/akzj/tau/core"
 )
 
-// WebSearchTool creates a web search tool using DuckDuckGo Instant Answer API.
+// WebSearchTool creates a DuckDuckGo web search tool (zero API keys required).
+//
+// Parameters:
+//   query (string, required) — the search query string
+//
+// Returns: abstract/answer text, source URL, and up to 5 related topics.
+// Uses the free DuckDuckGo Instant Answer API. No authentication required.
 func WebSearchTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",

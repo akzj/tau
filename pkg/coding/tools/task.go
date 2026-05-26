@@ -10,7 +10,15 @@ import (
 	"github.com/akzj/tau/core"
 )
 
-// TaskTool creates a session-scoped task manager tool.
+// TaskTool creates a simple task list management tool.
+//
+// Parameters:
+//   action  (string, required) — one of: "create", "update", "complete", "list"
+//   task_id (string, required for update/complete) — the task identifier
+//   title   (string, required for create) — task description
+//
+// Tasks are stored in-memory and scoped to the current session.
+// Task list is displayed with status indicators: [ ] pending, [✓] completed.
 func TaskTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",
@@ -53,9 +61,9 @@ func TaskTool() core.Tool {
 		},
 		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
-				Action string
-				TaskID string
-				Title  string
+				Action string `json:"action"`
+				TaskID string `json:"task_id"`
+				Title  string `json:"title"`
 			}
 			raw, _ := json.Marshal(prepared.Params)
 			json.Unmarshal(raw, &args)

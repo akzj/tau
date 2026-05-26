@@ -15,6 +15,13 @@ import (
 )
 
 // WebFetchTool creates a web page fetching tool.
+//
+// Parameters:
+//   url       (string, required) — the URL to fetch (http/https only)
+//   max_bytes (int, optional, default 1MB) — maximum bytes to download
+//
+// Strips HTML tags and returns plain text content. 10-second timeout.
+// User-Agent: tau/0.1. Only http/https schemes are allowed.
 func WebFetchTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",

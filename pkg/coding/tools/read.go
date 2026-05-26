@@ -10,7 +10,15 @@ import (
 	"github.com/akzj/tau/core"
 )
 
-// ReadTool creates a read-file tool.
+// ReadTool creates a file reading tool.
+//
+// Parameters:
+//   file_path (string, required) — workspace-relative path to the file to read
+//   offset    (int, optional, default 0) — 0-based line offset to start reading from
+//   limit     (int, optional, default all) — maximum number of lines to return
+//
+// Returns the file content as text. Content is capped at 64KiB.
+// Binary files are detected and a warning is prepended.
 func ReadTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",
@@ -50,10 +58,10 @@ func ReadTool() core.Tool {
 		},
 		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
-				FilePath string
-				Offset   int
-				Limit    int
-				MaxBytes int
+				FilePath string `json:"file_path"`
+				Offset   int    `json:"offset"`
+				Limit    int    `json:"limit"`
+				MaxBytes int    `json:"max_bytes"`
 			}
 			raw, _ := json.Marshal(prepared.Params)
 			json.Unmarshal(raw, &args)

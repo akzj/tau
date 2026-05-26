@@ -27,10 +27,27 @@ func (m *model) View() string {
 		maxMsgH = 1
 	}
 
-	// Panel 1: Messages area — clip to visible window.
+	// Panel 1: Messages area — clip to visible window, respecting scroll offset.
 	visible := m.messages
-	if len(visible) > maxMsgH {
-		visible = visible[len(visible)-maxMsgH:]
+	n := len(visible)
+	if n > maxMsgH {
+		start := n - maxMsgH - m.scrollOffset
+		if start < 0 {
+			start = 0
+		}
+		end := n - m.scrollOffset
+		if end > n {
+			end = n
+		}
+		if start >= end {
+			start = end - maxMsgH
+			if start < 0 {
+				start = 0
+			}
+		}
+		visible = visible[start:end]
+	} else {
+		m.scrollOffset = 0
 	}
 
 	var msgLines []string

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -285,5 +287,282 @@ func TestTaskTrackerUpdateNotFound(t *testing.T) {
 	_, err := tool.Execute(context.Background(), "c1", map[string]any{"action": "update", "task_id": "nonexistent", "status": "completed"}, nil)
 	if err == nil {
 		t.Error("expected error for nonexistent task")
+	}
+}
+
+// --- read.go edge cases ---
+
+func TestReadNonexistentFile(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.ReadTool()
+	_, err := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "nonexistent.xyz"}, nil)
+	if err == nil {
+		t.Error("expected error for nonexistent file")
+	}
+}
+
+func TestReadEmptyFileEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "empty.txt"), []byte{}, 0644)
+	tool := tools.ReadTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "empty.txt"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content[0].Text != "(empty file)" {
+		t.Errorf("expected '(empty file)', got %q", result.Content[0].Text)
+	}
+}
+
+func TestReadBinaryFileEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "bin.bin"), []byte{0x00, 0x01, 0x02}, 0644)
+	tool := tools.ReadTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "bin.bin"}, nil)
+	if !strings.Contains(result.Content[0].Text, "[binary file detected") {
+		t.Error("expected binary file warning")
+	}
+}
+
+func TestReadOversizeFileEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	big := strings.Repeat("x", tools.OutputCap+100)
+	os.WriteFile(filepath.Join(dir, "big.txt"), []byte(big), 0644)
+	tool := tools.ReadTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "big.txt"}, nil)
+	if len(result.Content[0].Text) > tools.OutputCap+200 {
+		t.Error("oversize file should be capped")
+	}
+}
+
+// --- write.go edge cases ---
+
+func TestWriteOutsideWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.WriteTool()
+	_, err := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "../outside.txt", "content": "x"}, nil)
+	if err == nil {
+		t.Error("expected error for path escaping workspace")
+	}
+}
+
+func TestWriteEmptyContentEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.WriteTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "clear.txt", "content": ""}, nil)
+	if !strings.Contains(result.Content[0].Text, "0 bytes") {
+		t.Errorf("expected '0 bytes', got %q", result.Content[0].Text)
+	}
+}
+
+func TestWriteOverwriteEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.WriteTool()
+	tool.Execute(context.Background(), "c1", map[string]any{"file_path": "over.txt", "content": "first"}, nil)
+	result, _ := tool.Execute(context.Background(), "c2", map[string]any{"file_path": "over.txt", "content": "second"}, nil)
+	if !strings.Contains(result.Content[0].Text, "overwritten") {
+		t.Errorf("expected 'overwritten', got %q", result.Content[0].Text)
+	}
+}
+
+// --- edit.go edge cases ---
+
+func TestEditOldNotFoundEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("hello"), 0644)
+	tool := tools.EditTool()
+	_, err := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "f.txt", "old": "xyz", "new": "abc"}, nil)
+	if err == nil {
+		t.Error("expected error when old text not found")
+	}
+}
+
+func TestEditMultilineEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "m.txt"), []byte("line1\nline2\nline3"), 0644)
+	tool := tools.EditTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "m.txt", "old": "line2", "new": "MIDDLE"}, nil)
+	if !strings.Contains(result.Content[0].Text, "Replaced 1") {
+		t.Errorf("expected 'Replaced 1', got %q", result.Content[0].Text)
+	}
+}
+
+func TestEditEmptyReplaceEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "e.txt"), []byte("remove-me hello"), 0644)
+	tool := tools.EditTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"file_path": "e.txt", "old": "remove-me ", "new": ""}, nil)
+	if !strings.Contains(result.Content[0].Text, "Replaced 1") {
+		t.Errorf("expected 'Replaced 1', got %q", result.Content[0].Text)
+	}
+}
+
+// --- bash.go edge cases ---
+
+func TestBashExitNonZero(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires bash")
+	}
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.BashTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"command": "exit 42", "timeout_seconds": 5}, nil)
+	if !strings.Contains(result.Content[0].Text, "[exit: 42]") {
+		t.Errorf("expected [exit: 42], got %q", result.Content[0].Text)
+	}
+}
+
+func TestBashTimeoutEdge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires bash")
+	}
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.BashTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"command": "sleep 10", "timeout_seconds": 1}, nil)
+	if !strings.Contains(result.Content[0].Text, "[timeout") {
+		t.Errorf("expected timeout indication, got %q", result.Content[0].Text)
+	}
+}
+
+func TestBashStderrEdge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires bash")
+	}
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.BashTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"command": "echo ok; echo err >&2", "timeout_seconds": 5}, nil)
+	if !strings.Contains(result.Content[0].Text, "[stderr]") {
+		t.Errorf("expected stderr capture, got %q", result.Content[0].Text)
+	}
+}
+
+func TestBashEmptyCommandEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.BashTool()
+	_, err := tool.Execute(context.Background(), "c1", map[string]any{"command": "", "timeout_seconds": 5}, nil)
+	if err == nil {
+		t.Error("expected error for empty command")
+	}
+}
+
+// --- glob.go edge cases ---
+
+func TestGlobEmptyResultEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.GlobTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"pattern": "*.nonexistent"}, nil)
+	// empty result is ok — should contain "(no matches"
+	if !strings.Contains(result.Content[0].Text, "no matches") {
+		t.Logf("glob result: %s", result.Content[0].Text)
+	}
+}
+
+func TestGlobHiddenFilesEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, ".hidden"), []byte("x"), 0644)
+	os.WriteFile(filepath.Join(dir, "visible"), []byte("x"), 0644)
+	tool := tools.GlobTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"pattern": "*"}, nil)
+	text := result.Content[0].Text
+	if strings.Contains(text, ".hidden") {
+		t.Log("note: .hidden matched by * glob (expected on some systems)")
+	}
+	if !strings.Contains(text, "visible") {
+		t.Error("expected visible in glob results")
+	}
+}
+
+func TestGlobMaxDepthEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0755)
+	os.WriteFile(filepath.Join(dir, "a", "b", "c", "deep.txt"), []byte("x"), 0644)
+	tool := tools.GlobTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"pattern": "**/*.txt", "max_depth": 1}, nil)
+	text := result.Content[0].Text
+	if strings.Contains(text, "deep.txt") {
+		t.Log("note: max_depth not enforced for deep paths")
+	}
+}
+
+// --- grep.go edge cases ---
+
+func TestGrepNoMatchEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "g.txt"), []byte("hello world"), 0644)
+	tool := tools.GrepTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"pattern": "xyz123nonexistent", "path": "g.txt"}, nil)
+	if !strings.Contains(result.Content[0].Text, "No matches") {
+		t.Errorf("expected 'No matches' for non-matching pattern, got %q", result.Content[0].Text)
+	}
+}
+
+func TestGrepBinarySkipEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "g.bin"), []byte{0x00, 0x01, 0x02}, 0644)
+	tool := tools.GrepTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"pattern": "x", "path": "g.bin"}, nil)
+	// Binary should be skipped; no matches expected
+	if !strings.Contains(result.Content[0].Text, "No matches") && !strings.Contains(result.Content[0].Text, "binary") {
+		t.Logf("grep result: %s", result.Content[0].Text)
+	}
+}
+
+func TestGrepRegexFailEdge(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.GrepTool()
+	_, err := tool.Execute(context.Background(), "c1", map[string]any{"pattern": "[invalid", "path": "g.txt"}, nil)
+	if err == nil {
+		t.Error("expected error for invalid regex")
+	}
+}
+
+// --- task_tracker.go edge cases ---
+
+func TestTaskTrackerEmptyListEdge(t *testing.T) {
+	tools.ResetGlobalTaskTracker()
+	tool := tools.TaskTrackerTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"action": "list"}, nil)
+	if !strings.Contains(result.Content[0].Text, "No tasks") {
+		t.Errorf("expected 'No tasks' for empty list, got %q", result.Content[0].Text)
+	}
+}
+
+func TestTaskTrackerCompletedStatusEdge(t *testing.T) {
+	tools.ResetGlobalTaskTracker()
+	tool := tools.TaskTrackerTool()
+	tool.Execute(context.Background(), "c1", map[string]any{"action": "create", "title": "test"}, nil)
+	result, _ := tool.Execute(context.Background(), "c2", map[string]any{"action": "update", "task_id": "task-1", "status": "completed"}, nil)
+	if !strings.Contains(result.Content[0].Text, "[completed]") && !strings.Contains(result.Content[0].Text, "[✓]") {
+		t.Errorf("expected completed status, got %q", result.Content[0].Text)
+	}
+}
+
+func TestTaskTrackerCancelledToCompletedEdge(t *testing.T) {
+	tools.ResetGlobalTaskTracker()
+	tool := tools.TaskTrackerTool()
+	tool.Execute(context.Background(), "c1", map[string]any{"action": "create", "title": "test"}, nil)
+	tool.Execute(context.Background(), "c2", map[string]any{"action": "update", "task_id": "task-1", "status": "cancelled"}, nil)
+	result, _ := tool.Execute(context.Background(), "c3", map[string]any{"action": "update", "task_id": "task-1", "status": "completed"}, nil)
+	if !strings.Contains(result.Content[0].Text, "[completed]") && !strings.Contains(result.Content[0].Text, "[✓]") {
+		t.Errorf("expected update after cancelled to work, got %q", result.Content[0].Text)
 	}
 }

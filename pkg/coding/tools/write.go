@@ -11,7 +11,14 @@ import (
 	"github.com/akzj/tau/core"
 )
 
-// WriteTool creates a write-file tool.
+// WriteTool creates a file writing tool.
+//
+// Parameters:
+//   file_path (string, required) — workspace-relative path. Parent directories are created automatically.
+//   content   (string, required) — the text content to write
+//
+// Returns a confirmation with the number of bytes written.
+// If the file already exists, it is overwritten and "(overwritten)" is noted.
 func WriteTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",
@@ -50,8 +57,8 @@ func WriteTool() core.Tool {
 		},
 		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
-				FilePath string
-				Content  string
+				FilePath string `json:"file_path"`
+				Content  string `json:"content"`
 			}
 			raw, _ := json.Marshal(prepared.Params)
 			json.Unmarshal(raw, &args)
