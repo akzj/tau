@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -209,7 +208,6 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 		case ProvToolCallEnd:
 			acc := toolCallBuf[pe.ToolCallID]
-			fmt.Fprintf(os.Stderr, "[LOOP] got ProvToolCallEnd: callID=%s toolName=%s\n", pe.ToolCallID, acc.name)
 			argsJSON := acc.argsBuf.String()
 
 			tcReq := ToolCallRequest{
@@ -258,8 +256,6 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 			r.events <- ErrorEvent{Timestamp_: timeNow(), Err: pe.Err, Code: ErrProvider}
 		}
 	}
-
-	fmt.Fprintf(os.Stderr, "[LOOP] event loop ended, pendingToolCalls=%d\n", len(pendingToolCalls))
 
 	// Determine turn end reason
 	reason := ReasonComplete

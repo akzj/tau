@@ -250,7 +250,6 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 
 		for _, choice := range chunk.Choices {
 			delta := choice.Delta
-			fmt.Fprintf(os.Stderr, "[DEBUG] chunk: finish_reason=%q choices=%d\n", choice.FinishReason, len(chunk.Choices))
 
 			if delta.Content != "" {
 				events <- core.ProviderEvent{
@@ -275,7 +274,6 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 						ToolName:   tc.Function.Name,
 					}
 					startedToolCalls = append(startedToolCalls, toolCallID)
-					fmt.Fprintf(os.Stderr, "[DEBUG] emit ProvToolCallStart: id=%s name=%s\n", toolCallID, tc.Function.Name)
 				} else if tc.ID == "" && tc.Function.Name == "" && tc.Function.Arguments != "" {
 					// Continuation: just delta
 					events <- core.ProviderEvent{
