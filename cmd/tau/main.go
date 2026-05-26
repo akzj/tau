@@ -98,6 +98,13 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
+
+	// Plugin subcommand
+	if flag.NArg() > 0 && flag.Arg(0) == "plugin" {
+		pluginCommand(flag.Args()[1:])
+		return
+	}
+
 	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools && !*listSkills && !*versionFlag {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
