@@ -210,6 +210,14 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	turnID := generateID()
 	r.events <- TurnStart{Timestamp_: timeNow(), TurnID: turnID}
 
+	// Fire BeforeAgentStart hook
+	if r.sess.Hooks.BeforeAgentStart != nil {
+		r.sess.Hooks.BeforeAgentStart.Run(ctx, AgentStartRequest{
+			TurnID: turnID,
+			Turn:   1,
+		})
+	}
+
 	var (
 		currentMsgID       string
 		contentBuf         strings.Builder
@@ -279,6 +287,14 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 				// Emit results in deterministic order; buffer for transcript
 				for _, tr := range results {
+					// Fire AfterToolResult hook
+					if r.sess.Hooks.AfterToolResult != nil {
+						r.sess.Hooks.AfterToolResult.Run(ctx, ToolResultWithError{
+							CallID: tr.callID,
+							Result: tr.result,
+							Err:    tr.err,
+						})
+					}
 					if tr.err != nil {
 						r.events <- ErrorEvent{Timestamp_: timeNow(), Err: tr.err, Code: ErrTool}
 					}

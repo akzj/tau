@@ -1,6 +1,9 @@
 package core
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Chain is a multi-handler chain where each handler can transform the value.
 // Handlers execute in insertion order.
@@ -25,6 +28,9 @@ type HookSet struct {
 	BeforeToolCall        Chain[ToolCallEvent]
 	AfterToolCall         Chain[ToolResultEvent]
 	BeforeCompaction      LastWins[CompactionRequest] // G4 Path A: summarise before compaction
+	BeforeAgentStart      LastWins[AgentStartRequest] // ADD: fired at turn start
+	AfterToolResult       Chain[ToolResultWithError]  // ADD: fired after each tool execution
+	BeforeSessionTree     LastWins[TreeEntry]         // ADD: fired before tree insertion
 }
 
 // ToolCallEvent is passed to BeforeToolCall hooks.
@@ -48,6 +54,29 @@ type CompactionRequest struct {
 	Summary          string   // handler fills this with the summarization result
 	FirstKeptEntryID Position // first message ID to keep after compaction
 	TokensBefore     int      // estimated token count before compaction
+}
+
+// AgentStartRequest is passed to BeforeAgentStart hooks when a Loop run begins.
+type AgentStartRequest struct {
+	TurnID string
+	Input  string // user input text (empty for Continue)
+	Turn   int    // 1-based turn number
+}
+
+// ToolResultWithError is passed to AfterToolResult hooks after a tool executes.
+type ToolResultWithError struct {
+	CallID string
+	Result ToolResult
+	Err    error
+}
+
+// TreeEntry is passed to BeforeSessionTree hooks before insertion into the session tree.
+type TreeEntry struct {
+	ID        string
+	ParentID  string
+	Type      string    // "message", "compaction", "leaf", "branch_summary", "session_info"
+	Timestamp time.Time
+	Data      any // the actual entry data (Message, CompactionRequest, etc.)
 }
 
 // --- Chain implementation ---
