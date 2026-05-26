@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -12,6 +13,9 @@ import (
 
 //go:embed system_base.md dynamic.md
 var promptFS embed.FS
+
+// piVarPattern matches $1, $2, ..., $@, $ARGUMENTS
+var piVarPattern = regexp.MustCompile(`\$\d+|\$@|\$ARGUMENTS`)
 
 // Input carries all data needed to build the system prompt.
 type Input struct {
@@ -87,4 +91,28 @@ func BuildDynamicContext(in DynamicInput) (string, error) {
 type DynamicInput struct {
 	GitStatus    string
 	WorkingFiles string
+}
+
+// RenderPrompt renders a prompt template, supporting both pi-style ($1/$@/$ARGUMENTS)
+// and Go text/template syntax. Auto-detection: if the template contains pi variables,
+// pi-style substitution is used. Otherwise, the template is returned unchanged for
+// text/template rendering by the caller.
+func RenderPrompt(tmpl string, args []string) string {
+	if piVarPattern.MatchString(tmpl) {
+		return renderPiStyle(tmpl, args)
+	}
+	return tmpl
+}
+
+// renderPiStyle substitutes pi-style variables.
+// $1, $2, ... → positional arguments
+// $@ → all arguments joined by space
+// $ARGUMENTS → alias for $@
+func renderPiStyle(tmpl string, args []string) string {
+	result := strings.ReplaceAll(tmpl, "$@", strings.Join(args, " "))
+	result = strings.ReplaceAll(result, "$ARGUMENTS", strings.Join(args, " "))
+	for i, arg := range args {
+		result = strings.ReplaceAll(result, fmt.Sprintf("$%d", i+1), arg)
+	}
+	return result
 }

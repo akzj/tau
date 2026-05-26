@@ -17,6 +17,7 @@ type ProviderLoader struct {
 	factories map[string]func() (core.Provider, error)
 	cache     map[string]core.Provider
 	once      map[string]*sync.Once
+	errs      map[string]error // cached factory errors for failed once.Do
 }
 
 // NewProviderLoader creates a loader with built-in factories.
@@ -25,6 +26,7 @@ func NewProviderLoader() *ProviderLoader {
 		factories: make(map[string]func() (core.Provider, error)),
 		cache:     make(map[string]core.Provider),
 		once:      make(map[string]*sync.Once),
+		errs:      make(map[string]error),
 	}
 	// Built-in factories
 	l.RegisterFactory("openai", func() (core.Provider, error) {

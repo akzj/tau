@@ -99,21 +99,35 @@ func (r *Runtime) Bind(api *ExtensionAPI, ctx *ExtensionContext) error {
 	})
 	r.vm.Set("console", console)
 
-	// Run all scripts
+	// Run all scripts (with panic recovery — goja can panic on malformed JS)
 	for _, s := range r.scripts {
-		_, err := r.vm.RunProgram(s.program)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "extensions: run %s: %v\n", s.path, err)
-		}
+		func() {
+			defer func() {
+				if rc := recover(); rc != nil {
+					fmt.Fprintf(os.Stderr, "extensions: panic in %s: %v\n", s.path, rc)
+				}
+			}()
+			_, err := r.vm.RunProgram(s.program)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "extensions: run %s: %v\n", s.path, err)
+			}
+		}()
 	}
 
-	// Call default export if present
+	// Call default export if present (with panic recovery)
 	defaultFn, ok := goja.AssertFunction(r.vm.Get("defaultExport"))
 	if ok {
-		_, err := defaultFn(goja.Undefined(), r.vm.ToValue(api))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "extensions: default export: %v\n", err)
-		}
+		func() {
+			defer func() {
+				if rc := recover(); rc != nil {
+					fmt.Fprintf(os.Stderr, "extensions: panic in default export: %v\n", rc)
+				}
+			}()
+			_, err := defaultFn(goja.Undefined(), r.vm.ToValue(api))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "extensions: default export: %v\n", err)
+			}
+		}()
 	}
 
 	return nil

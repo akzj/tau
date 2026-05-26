@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/akzj/tau/core"
