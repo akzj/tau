@@ -141,6 +141,8 @@ func main() {
 		api = core.WireAnthropicMessages
 	case "azure":
 		api = core.WireOpenAICompletions // Azure uses same wire protocol
+	case "mistral":
+		api = core.WireOpenAICompletions // Mistral uses same wire protocol
 	case "google":
 		api = core.WireGoogleGenerativeAI
 	default:

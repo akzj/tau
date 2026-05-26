@@ -9,6 +9,7 @@ import (
 	"github.com/akzj/tau/providers/anthropic-messages"
 	"github.com/akzj/tau/providers/azure-openai"
 	"github.com/akzj/tau/providers/google-genai"
+	"github.com/akzj/tau/providers/mistral"
 	"github.com/akzj/tau/providers/openai-completions"
 )
 
@@ -41,6 +42,9 @@ func NewProviderLoader() *ProviderLoader {
 	})
 	l.RegisterFactory("azure", func() (core.Provider, error) {
 		return azure_openai.NewProvider()
+	})
+	l.RegisterFactory("mistral", func() (core.Provider, error) {
+		return mistral.NewProvider()
 	})
 	l.RegisterFactory("faux", func() (core.Provider, error) {
 		return faux.New(), nil
