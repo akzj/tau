@@ -9,10 +9,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/coding"
-	"github.com/akzj/tau/pkg/tui"
 	"github.com/akzj/tau/providers/anthropic-messages"
 	"github.com/akzj/tau/providers/openai-completions"
 )
@@ -25,7 +23,6 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Verbose output")
 	noTools := flag.Bool("no-tools", false, "Disable all tools")
 	maxTurns := flag.Int("max-turns", 10, "Max agent turns")
-	tuiMode := flag.Bool("tui", false, "Launch Terminal UI")
 	flag.Parse()
 
 	// Resolve workspace
@@ -47,7 +44,7 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode {
+	if prompt == "" {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -106,20 +103,8 @@ func main() {
 		sess.Tools.SetActive(nil)
 	}
 
-	loop := core.NewLoop()
-
-	// TUI mode: launch Bubble Tea, skip batch loop.
-	if *tuiMode {
-		tm := tui.NewModel(sess, loop, prompt)
-		p := tea.NewProgram(tm, tea.WithAltScreen())
-		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "tui: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
 	// Main loop
+	loop := core.NewLoop()
 	currentPrompt := prompt
 
 	for turn := 0; turn < *maxTurns; turn++ {

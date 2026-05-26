@@ -106,20 +106,8 @@ func main() {
 		sess.Tools.SetActive(nil)
 	}
 
-	loop := core.NewLoop()
-
-	// TUI mode: launch Bubble Tea, skip batch loop.
-	if *tuiMode {
-		tm := tui.NewModel(sess, loop, prompt)
-		p := tea.NewProgram(tm, tea.WithAltScreen())
-		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "tui: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
 	// Main loop
+	loop := core.NewLoop()
 	currentPrompt := prompt
 
 	for turn := 0; turn < *maxTurns; turn++ {
