@@ -74,11 +74,7 @@ func (p *AnthropicMessagesProvider) Stream(ctx context.Context, req core.StreamR
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		msg := string(bodyBytes)
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-			return nil, core.Transient("anthropic.Stream", fmt.Errorf("%d: %s", resp.StatusCode, msg))
-		}
-		return nil, core.Permanent("anthropic.Stream", fmt.Errorf("%d: %s", resp.StatusCode, msg))
+		return nil, p.classifyError("anthropic.Stream", resp.StatusCode, bodyBytes)
 	}
 
 	events := make(chan core.ProviderEvent, 64)
@@ -108,7 +104,7 @@ func (p *AnthropicMessagesProvider) Complete(ctx context.Context, req core.Compl
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return core.CompleteResponse{}, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return core.CompleteResponse{}, p.classifyError("anthropic.Complete", resp.StatusCode, bodyBytes)
 	}
 
 	var result struct {
@@ -415,10 +411,42 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 		}
 		// Empty lines or comment lines are ignored
 	}
-if err := scanner.Err(); err != nil {
+
+	if err := scanner.Err(); err != nil {
 		events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
-	}	// Flush final event
+	}
+	// Flush final event
 	flush()
+}
+
+// --- error classification ---
+
+// classifyError returns a structured core.Error for the given HTTP status code and body.
+func (p *AnthropicMessagesProvider) classifyError(op string, statusCode int, body []byte) error {
+	var errResp struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	json.Unmarshal(body, &errResp)
+	msg := errResp.Error.Message
+	if msg == "" {
+		msg = string(body)
+	}
+
+	switch {
+	case statusCode == 429:
+		return core.Transient(op, fmt.Errorf("rate limited (429): %s", msg))
+	case statusCode >= 500:
+		return core.Transient(op, fmt.Errorf("server error (%d): %s", statusCode, msg))
+	case statusCode == 401 || statusCode == 403:
+		return core.Permanent(op, fmt.Errorf("auth error (%d): %s", statusCode, msg))
+	case statusCode == 400:
+		return core.UsageError(op, fmt.Errorf("bad request (%d): %s", statusCode, msg))
+	default:
+		return core.Permanent(op, fmt.Errorf("API error %d: %s", statusCode, msg))
+	}
 }
 
 // --- compat ---
