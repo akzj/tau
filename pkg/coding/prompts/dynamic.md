@@ -1,0 +1,3 @@
+## CURRENT STATE
+{{.GitStatus}}
+{{.WorkingFiles}}
