@@ -39,6 +39,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "Log format: text, json")
 	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
+	metricsAddr := flag.String("metrics-addr", "", "Metrics listen address (e.g., :9090)")
 	configPath := flag.String("config", "", "Config file path (default: ~/.tau/tau.yaml)")
 	flag.Parse()
 
@@ -177,6 +178,19 @@ func main() {
 			core.Logger().Info("health: listening", "addr", *healthAddr)
 			if err := http.ListenAndServe(*healthAddr, nil); err != nil {
 				core.Logger().Error("health: listen error", "err", err)
+			}
+		}()
+	}
+
+	// Start metrics server if requested
+	if *metricsAddr != "" {
+		core.RegisterTauMetrics()
+		go func() {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/metrics", core.MetricsHandler())
+			core.Logger().Info("metrics: listening", "addr", *metricsAddr)
+			if err := http.ListenAndServe(*metricsAddr, mux); err != nil {
+				core.Logger().Error("metrics: listen error", "err", err)
 			}
 		}()
 	}

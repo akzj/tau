@@ -525,6 +525,11 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	r.sess.EventBus.Emit(Event{Type: EvtTurnEnd, Payload: map[string]string{"reason": string(reason)}})
 	Logger().Debug("loop: turn end", "reason", reason)
 
+	// Increment metrics
+	if c, ok := GetMetrics().counters["tau_turns_total"]; ok {
+		c.Inc()
+	}
+
 	// Check ShouldStopAfterTurn hook
 	turnInfo := TurnInfo{TurnNumber: 1, Reason: reason}
 	if r.sess.Hooks.ShouldStopAfterTurn != nil {
