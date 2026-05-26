@@ -566,3 +566,35 @@ func TestTaskTrackerCancelledToCompletedEdge(t *testing.T) {
 		t.Errorf("expected update after cancelled to work, got %q", result.Content[0].Text)
 	}
 }
+
+// --- workspace_diag.go tests ---
+
+func TestWorkspaceDiagTool(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	// Create a few files to scan
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0644)
+	tool := tools.WorkspaceDiagTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"depth": 1}, nil)
+	if err != nil {
+		t.Fatalf("workspace_diag: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Error("expected content")
+	}
+	if !strings.Contains(result.Content[0].Text, "Total files") {
+		t.Error("expected 'Total files' in output")
+	}
+}
+
+func TestWorkspaceDiagWithGit(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
+	tool := tools.WorkspaceDiagTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"include_git": false}, nil)
+	if !strings.Contains(result.Content[0].Text, "Language Breakdown") {
+		t.Error("expected language breakdown even without git")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -37,6 +38,7 @@ func main() {
 	listSkills := flag.Bool("list-skills", false, "List available skills")
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "Log format: text, json")
+	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
 	flag.Parse()
 
 	core.InitLogger(*logLevel, *logFormat)
@@ -68,7 +70,7 @@ func main() {
 
 	// --list-tools: print available tools and exit
 	if *listTools {
-		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch"}
+		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag"}
 		fmt.Println("Available tools:")
 		for _, t := range toolNames {
 			fmt.Printf("  %s\n", t)
@@ -134,6 +136,18 @@ func main() {
 	// Set up graceful shutdown (SIGINT/SIGTERM)
 	shutdown := core.NewShutdown()
 	go core.SignalHandler(shutdown)
+
+	// Start health check server if requested
+	if *healthAddr != "" {
+		http.HandleFunc("/health", core.HealthHandler(7, 11))
+		http.HandleFunc("/ready", core.ReadyHandler())
+		go func() {
+			core.Logger().Info("health: listening", "addr", *healthAddr)
+			if err := http.ListenAndServe(*healthAddr, nil); err != nil {
+				core.Logger().Error("health: listen error", "err", err)
+			}
+		}()
+	}
 
 	// Initialize provider system (--provider flag preserved for backward compat;
 	// provider is now auto-resolved from --model via the model registry)
