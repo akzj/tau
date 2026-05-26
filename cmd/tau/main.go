@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/coding"
+	"github.com/akzj/tau/pkg/coding/tools"
 	"github.com/akzj/tau/pkg/tui"
 	"github.com/akzj/tau/pkg/webui"
 	"github.com/akzj/tau/pkg/persist"
@@ -42,6 +43,7 @@ func main() {
 	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
 	metricsAddr := flag.String("metrics-addr", "", "Metrics listen address (e.g., :9090)")
 	configPath := flag.String("config", "", "Config file path (default: ~/.tau/tau.yaml)")
+	pluginDir := flag.String("plugin-dir", "", "Plugin directory (default: $TAU_PLUGIN_DIR or ~/.tau/plugins)")
 	flag.Parse()
 
 	// Load config file (flag > env > config > default)
@@ -201,6 +203,16 @@ func main() {
 			}
 		}()
 	}
+
+	// Discover and register plugins
+	if *pluginDir != "" {
+		os.Setenv("TAU_PLUGIN_DIR", *pluginDir)
+	}
+	if err := core.Discover(); err != nil {
+		core.Logger().Warn("plugin: discover error", "err", err)
+	}
+	// Register example plugin (in-process)
+	core.RegisterPlugin(&tools.ExamplePlugin{})
 
 	// Initialize provider system (--provider flag preserved for backward compat;
 	// provider is now auto-resolved from --model via the model registry)
