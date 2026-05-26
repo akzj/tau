@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -18,6 +19,13 @@ var (
 	errorStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef5350"))
 	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#78909c")).Background(lipgloss.Color("#263238"))
 	streamingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#81c784")).Faint(true)
+
+	// Syntax highlighting styles.
+	keywordStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#4fc3f7")).Bold(true)
+	stringStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#a5d6a7"))
+	commentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#616161")).Italic(true)
+	numberStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffcc80"))
+	typeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#82b1ff"))
 )
 
 // View implements tea.Model.
@@ -57,7 +65,13 @@ func (m *model) View() string {
 	}
 
 	for _, msg := range visible {
-		content := truncateView(msg.Content, maxW)
+		content := msg.Content
+		// Syntax-highlight code blocks; skip truncation (ANSI codes break byte counts).
+		if strings.Contains(content, "```") {
+			content = highlightCodeBlocks(content)
+		} else {
+			content = truncateView(content, maxW)
+		}
 		prefix := prefixFor(msg.Role)
 		style := styleFor(msg.Role)
 		msgLines = append(msgLines, style.Render(prefix+" "+content))
@@ -236,6 +250,125 @@ func shortenPath(p string, max int) string {
 		return p
 	}
 	return "…" + p[len(p)-max+3:]
+}
+
+// --- Syntax highlighting ---
+
+// highlightCodeBlocks finds ```lang\n...\n``` blocks and applies syntax highlighting.
+func highlightCodeBlocks(text string) string {
+	re := regexp.MustCompile("(?s)```(\\w*)\\n(.*?)```")
+	return re.ReplaceAllStringFunc(text, func(match string) string {
+		parts := re.FindStringSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+		lang := parts[1]
+		code := parts[2]
+		highlighted := highlightCode(lang, code)
+		return "```" + lang + "\n" + highlighted + "\n```"
+	})
+}
+
+// highlightCode applies syntax coloring to a code block based on language.
+func highlightCode(lang string, text string) string {
+	if lang == "" {
+		lang = "generic"
+	}
+	lines := strings.Split(text, "\n")
+	var highlighted []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Comment detection (cross-language).
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "--") {
+			highlighted = append(highlighted, commentStyle.Render(line))
+			continue
+		}
+		switch lang {
+		case "go", "golang":
+			highlighted = append(highlighted, highlightGoLine(line))
+		case "python", "py":
+			highlighted = append(highlighted, highlightPythonLine(line))
+		case "js", "javascript", "ts", "typescript":
+			highlighted = append(highlighted, highlightJSLine(line))
+		case "sh", "bash", "shell":
+			highlighted = append(highlighted, highlightBashLine(line))
+		default:
+			highlighted = append(highlighted, highlightGenericLine(line))
+		}
+	}
+	return strings.Join(highlighted, "\n")
+}
+
+func highlightGoLine(line string) string {
+	keywords := []string{"func", "return", "if", "else", "for", "range", "switch",
+		"case", "defer", "go", "select", "chan", "map", "struct", "interface",
+		"type", "var", "const", "import", "package", "break", "continue",
+		"fallthrough", "default"}
+	types := []string{"string", "int", "bool", "error", "byte", "rune",
+		"float64", "float32", "int64", "int32", "uint64", "uint32", "uint",
+		"uintptr", "complex64", "complex128"}
+	result := colorStrings(line)
+	result = colorNumbers(result)
+	for _, kw := range keywords {
+		result = strings.ReplaceAll(result, kw, keywordStyle.Render(kw))
+	}
+	for _, t := range types {
+		result = strings.ReplaceAll(result, t, typeStyle.Render(t))
+	}
+	return result
+}
+
+func highlightPythonLine(line string) string {
+	keywords := []string{"def", "return", "if", "elif", "else", "for", "while",
+		"try", "except", "finally", "with", "as", "import", "from", "class",
+		"pass", "break", "continue", "yield", "raise", "assert", "lambda",
+		"and", "or", "not", "in", "is", "None", "True", "False"}
+	result := colorStrings(line)
+	for _, kw := range keywords {
+		result = strings.ReplaceAll(result, kw, keywordStyle.Render(kw))
+	}
+	return result
+}
+
+func highlightJSLine(line string) string {
+	keywords := []string{"function", "return", "if", "else", "for", "while",
+		"switch", "case", "break", "continue", "try", "catch", "finally",
+		"throw", "new", "delete", "typeof", "instanceof", "void", "this",
+		"class", "extends", "super", "import", "export", "default", "from",
+		"const", "let", "var", "async", "await", "yield", "of", "in"}
+	result := colorStrings(line)
+	for _, kw := range keywords {
+		result = strings.ReplaceAll(result, kw, keywordStyle.Render(kw))
+	}
+	return result
+}
+
+func highlightBashLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "#") {
+		return commentStyle.Render(line)
+	}
+	return line
+}
+
+func highlightGenericLine(line string) string {
+	return colorStrings(line)
+}
+
+func colorStrings(s string) string {
+	strPattern := `"(?:[^"\\]|\\.)*"|` + "`[^`]*`"
+	re := regexp.MustCompile(strPattern)
+	return re.ReplaceAllStringFunc(s, func(match string) string {
+		return stringStyle.Render(match)
+	})
+}
+
+func colorNumbers(s string) string {
+	re := regexp.MustCompile(`\b\d+\.?\d*\b`)
+	return re.ReplaceAllStringFunc(s, func(match string) string {
+		return numberStyle.Render(match)
+	})
 }
 
 func truncateView(s string, max int) string {
