@@ -15,9 +15,6 @@ type HealthStatus struct {
 	Tools     int    `json:"tools"`
 }
 
-// Version is set at build time via ldflags. Default: "dev".
-var Version = "dev"
-
 // StartTime records when the application started.
 var StartTime = time.Now()
 

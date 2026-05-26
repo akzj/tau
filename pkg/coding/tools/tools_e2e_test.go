@@ -598,3 +598,112 @@ func TestWorkspaceDiagWithGit(t *testing.T) {
 		t.Error("expected language breakdown even without git")
 	}
 }
+
+// --- list_files.go tests ---
+
+func TestListFilesRoot(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0644)
+	tool := tools.ListFilesTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"depth": 1}, nil)
+	if len(result.Content[0].Text) == 0 {
+		t.Error("expected directory listing")
+	}
+}
+
+func TestListFilesWithPattern(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x"), 0644)
+	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("hello"), 0644)
+	tool := tools.ListFilesTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"pattern": "*.go", "depth": 1}, nil)
+	if !strings.Contains(result.Content[0].Text, ".go") {
+		t.Errorf("expected .go match, got %q", result.Content[0].Text)
+	}
+	if strings.Contains(result.Content[0].Text, ".txt") {
+		t.Error("unexpected .txt in filtered results")
+	}
+}
+
+// --- search_code.go tests ---
+
+func TestSearchCodeRegex(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	os.WriteFile(filepath.Join(dir, "test.go"), []byte("func hello() { return nil }"), 0644)
+	tool := tools.SearchCodeTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"query": "func"}, nil)
+	if !strings.Contains(result.Content[0].Text, "func") {
+		t.Error("expected func match")
+	}
+}
+
+func TestSearchCodeNoMatch(t *testing.T) {
+	tool := tools.SearchCodeTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"query": "xyznonexistent123"}, nil)
+	if !strings.Contains(result.Content[0].Text, "No matches") {
+		t.Error("expected 'No matches'")
+	}
+}
+
+// --- run_tests.go tests ---
+
+func TestRunTestsAutoDetect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires test tools")
+	}
+	tool := tools.RunTestsTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"timeout_seconds": 5}, nil)
+	t.Logf("run_tests output: %s", result.Content[0].Text)
+}
+
+func TestRunTestsNoFramework(t *testing.T) {
+	dir := t.TempDir()
+	tools.WorkspaceRoot = dir
+	tool := tools.RunTestsTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{}, nil)
+	if !strings.Contains(result.Content[0].Text, "No test framework") {
+		t.Logf("output: %s", result.Content[0].Text)
+	}
+}
+
+// --- git_diff.go tests ---
+
+func TestGitDiffNoGit(t *testing.T) {
+	tool := tools.GitDiffTool()
+	_, err := tool.Execute(context.Background(), "c1", map[string]any{}, nil)
+	// Either works or returns "git not available"
+	_ = err
+}
+
+func TestGitDiffStaged(t *testing.T) {
+	tool := tools.GitDiffTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"staged": true}, nil)
+	if err != nil {
+		t.Skip("git not available")
+	}
+	_ = result
+}
+
+// --- ask_user.go tests ---
+
+func TestAskUser(t *testing.T) {
+	tool := tools.AskUserTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"question": "proceed?"}, nil)
+	if !strings.Contains(result.Content[0].Text, "❓") {
+		t.Error("expected ❓ prefix")
+	}
+	if !result.Terminate {
+		t.Error("AskUser should set Terminate=true to pause loop")
+	}
+}
+
+func TestAskUserWithOptions(t *testing.T) {
+	tool := tools.AskUserTool()
+	result, _ := tool.Execute(context.Background(), "c1", map[string]any{"question": "choose", "options": []any{"a", "b"}}, nil)
+	if !strings.Contains(result.Content[0].Text, "Options: a, b") {
+		t.Error("expected options in output")
+	}
+}

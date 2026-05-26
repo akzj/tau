@@ -36,6 +36,7 @@ func main() {
 	listModels := flag.Bool("list-models", false, "List available models")
 	listTools := flag.Bool("list-tools", false, "List available tools")
 	listSkills := flag.Bool("list-skills", false, "List available skills")
+	versionFlag := flag.Bool("version", false, "Print version and exit")
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "Log format: text, json")
 	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
@@ -95,15 +96,21 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools && !*listSkills {
+	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools && !*listSkills && !*versionFlag {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
+	// --version: print version and exit
+	if *versionFlag {
+		fmt.Printf("tau %s (built %s, commit %s)\n", core.Version, core.BuildTime, core.CommitSHA)
+		return
+	}
+
 	// --list-tools: print available tools and exit
 	if *listTools {
-		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag"}
+		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag", "list_files", "search_code", "run_tests", "git_diff", "ask_user"}
 		fmt.Println("Available tools:")
 		for _, t := range toolNames {
 			fmt.Printf("  %s\n", t)
