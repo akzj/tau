@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/akzj/tau/core"
+	"github.com/akzj/tau/pkg/sandbox"
 )
 
 // BashTool creates a bash-execution tool.
@@ -61,6 +62,29 @@ func BashTool() core.Tool {
 
 			cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutSeconds)*time.Second)
 			defer cancel()
+
+		// Route through container sandbox if available
+		if SandboxRunner != nil && SandboxRunner.Backend() != sandbox.None {
+			result, runErr := SandboxRunner.Run(cmdCtx, args.Command, workDir, time.Duration(args.TimeoutSeconds)*time.Second)
+			if runErr == nil {
+				output := result.Stdout
+				if result.Stderr != "" {
+					output += "\n[stderr]\n" + result.Stderr
+				}
+				if result.ExitCode != 0 {
+					output += fmt.Sprintf("\n[exit: %d]", result.ExitCode)
+				} else {
+					output += "\n[exit: 0]"
+				}
+				if len(output) > OutputCap {
+					output = output[:OutputCap] + "\n... (truncated)"
+				}
+				return core.ToolResult{
+					Content: []core.Content{{Type: "text", Text: output}},
+				}, nil
+			}
+			// Fall through to direct exec if container fails
+		}
 
 			cmd := exec.CommandContext(cmdCtx, "bash", "-c", args.Command)
 			cmd.Dir = workDir

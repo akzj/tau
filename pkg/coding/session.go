@@ -10,6 +10,7 @@ import (
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/coding/prompts"
 	"github.com/akzj/tau/pkg/coding/tools"
+	"github.com/akzj/tau/pkg/sandbox"
 )
 
 // CodingSession wraps a core.Session with coding-agent defaults.
@@ -30,6 +31,10 @@ type CodingSessionOptions struct {
 func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSession, error) {
 	// Set sandbox root
 	tools.WorkspaceRoot = opts.WorkspaceRoot
+
+	// Initialize sandbox runner (Docker/Podman with PathJail fallback)
+	cfg := sandbox.LoadConfig()
+	tools.SandboxRunner = sandbox.Detect(cfg.PreferredBackend(), opts.WorkspaceRoot)
 
 	sess, err := core.NewSession(ctx, core.SessionOptions{
 		Provider:     opts.Provider,

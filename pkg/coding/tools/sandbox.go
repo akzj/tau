@@ -5,10 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/akzj/tau/pkg/sandbox"
 )
 
 // WorkspaceRoot is set at session init; all path jails are relative to this.
 var WorkspaceRoot string
+
+// SandboxRunner is an optional container runner. Set at session init.
+// When nil or Backend() returns None, the bash tool falls through to direct exec.
+var SandboxRunner sandbox.Runner
 
 // ResolvePath resolves a relative path against the workspace root.
 // Rejects paths that escape the workspace (.., symlinks, absolute paths).
