@@ -31,6 +31,11 @@ const (
 	ReasonCancelled TurnEndReason = "cancelled"
 )
 
+// streamResult wraps a provider event channel for use with Retry.
+type streamResult struct {
+	ch <-chan ProviderEvent
+}
+
 // Loop drives one agent turn cycle.
 type Loop interface {
 	Prompt(ctx context.Context, sess *Session, input UserInput) (*Run, error)
@@ -136,7 +141,18 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
-	provEvents, err := l.streamWithRetry(ctx, p, req)
+	result, err := Retry(ctx, DefaultRetryConfig(), func(ctx context.Context) (streamResult, error) {
+		ch, err := p.Stream(ctx, req)
+		if err != nil {
+			return streamResult{}, err
+		}
+		return streamResult{ch: ch}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("provider stream: %w", err)
+	}
+	provEvents := result.ch
+	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +225,18 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
-	provEvents, err := l.streamWithRetry(ctx, p, req)
+	result, err := Retry(ctx, DefaultRetryConfig(), func(ctx context.Context) (streamResult, error) {
+		ch, err := p.Stream(ctx, req)
+		if err != nil {
+			return streamResult{}, err
+		}
+		return streamResult{ch: ch}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("provider stream: %w", err)
+	}
+	provEvents := result.ch
+	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
 	if err != nil {
 		return nil, err
 	}
@@ -575,38 +602,3 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-func isTransient(err error) bool {
-	s := err.Error()
-	return strings.Contains(s, "429") || strings.Contains(s, "503") || strings.Contains(s, "timeout") || strings.Contains(s, "connection")
-}
-
-func (l *defaultLoop) streamWithRetry(ctx context.Context, p Provider, req StreamRequest) (<-chan ProviderEvent, error) {
-	maxRetries := req.MaxRetries
-	if maxRetries < 0 {
-		maxRetries = 0
-	}
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		provEvents, err := p.Stream(ctx, req)
-		if err == nil {
-			return provEvents, nil
-		}
-		lastErr = err
-		if attempt < maxRetries {
-			if !isTransient(err) {
-				break
-			}
-			Logger().Warn("loop: retry", "attempt", attempt+1, "maxRetries", maxRetries, "err", err.Error()[:min(len(err.Error()), 100)])
-			delay := req.RetryDelay * time.Duration(1<<uint(attempt))
-			if delay <= 0 {
-				delay = time.Second
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-	}
-	return nil, fmt.Errorf("provider stream (after %d retries): %w", maxRetries, lastErr)
-}

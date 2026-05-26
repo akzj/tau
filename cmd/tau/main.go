@@ -128,7 +128,7 @@ func main() {
 
 	// --list-tools: print available tools and exit
 	if *listTools {
-		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag", "list_files", "search_code", "run_tests", "git_diff", "ask_user"}
+		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag", "list_files", "search_code", "run_tests", "git_diff", "ask_user", "lint", "format", "deps", "coverage"}
 		fmt.Println("Available tools:")
 		for _, t := range toolNames {
 			fmt.Printf("  %s\n", t)
@@ -148,6 +148,11 @@ func main() {
 			"python-code-review", "python-debugging", "python-test-writing", "python-refactoring",
 			// JS (4)
 			"js-code-review", "js-debugging", "js-test-writing", "js-refactoring",
+			// Domain (10)
+			"refactoring-patterns", "debugging-strategies", "api-design",
+			"database-patterns", "cicd-patterns", "testing-strategy",
+			"security-review", "code-review-intensive", "performance-optimization",
+			"documentation-generation",
 		}
 		fmt.Println("Available skills (built-in):")
 		for _, s := range builtins {

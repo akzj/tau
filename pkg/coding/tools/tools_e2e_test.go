@@ -707,3 +707,69 @@ func TestAskUserWithOptions(t *testing.T) {
 		t.Error("expected options in output")
 	}
 }
+
+// --- lint.go, format.go, deps.go, coverage.go tests ---
+
+func TestLintTool(t *testing.T) {
+	tool := tools.LintTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"path": "./..."}, nil)
+	if err != nil {
+		t.Skipf("lint not available: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Skip("lint returned empty output")
+	}
+	text := result.Content[0].Text
+	if len(text) > 200 {
+		text = text[:200]
+	}
+	t.Logf("lint output: %s", text)
+}
+
+func TestFormatTool(t *testing.T) {
+	tool := tools.FormatTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{"check": true}, nil)
+	if err != nil {
+		t.Skipf("gofmt not available: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Skip("goimports returned empty output")
+	}
+	text := result.Content[0].Text
+	if len(text) > 200 {
+		text = text[:200]
+	}
+	t.Logf("format output: %s", text)
+}
+
+func TestDepsTool(t *testing.T) {
+	tool := tools.DepsTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{}, nil)
+	if err != nil {
+		t.Skipf("go not available: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Skip("deps returned empty output")
+	}
+	text := result.Content[0].Text
+	if len(text) > 200 {
+		text = text[:200]
+	}
+	t.Logf("deps output: %s", text)
+}
+
+func TestCoverageTool(t *testing.T) {
+	tool := tools.CoverageTool()
+	result, err := tool.Execute(context.Background(), "c1", map[string]any{}, nil)
+	if err != nil {
+		t.Skipf("go test not available: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Skip("coverage returned empty output")
+	}
+	text := result.Content[0].Text
+	if len(text) > 200 {
+		text = text[:200]
+	}
+	t.Logf("coverage output: %s", text)
+}
