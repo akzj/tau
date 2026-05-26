@@ -67,6 +67,7 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 
 	// Consume steer queue — inject as system message before this turn
 	if _, steerText := sess.DrainSteers(); steerText != "" {
+		sess.EventBus.Emit(Event{Type: EvtSteerInjected, Payload: steerText})
 		sess.Transcript.Append(Message{
 			Role:      RoleSystem,
 			Content:   "[User direction]\n" + steerText,
@@ -114,7 +115,9 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	if err != nil {
 		return nil, err
 	}
+	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
 	provEvents, err := p.Stream(ctx, req)
+	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
 	if err != nil {
 		return nil, fmt.Errorf("provider stream: %w", err)
 	}
@@ -183,7 +186,9 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 	if err != nil {
 		return nil, err
 	}
+	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
 	provEvents, err := p.Stream(ctx, req)
+	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
 	if err != nil {
 		return nil, fmt.Errorf("provider stream: %w", err)
 	}
@@ -324,6 +329,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 								results[idx] = toolResult{tc.CallID, ToolResult{}, err}
 								return
 							}
+							r.sess.EventBus.Emit(Event{Type: EvtToolPrepare, Payload: tc.ToolName})
 							prepared, err := tp.Prepare(ctx, tc.CallID, raw)
 							if err != nil {
 								results[idx] = toolResult{tc.CallID, ToolResult{}, err}
@@ -335,6 +341,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 							if finalizeErr := tp.Finalize(ctx, prepared, result); finalizeErr != nil {
 								// Log but don't override result error
 							}
+							r.sess.EventBus.Emit(Event{Type: EvtToolFinalize, Payload: tc.ToolName})
 							results[idx] = toolResult{tc.CallID, result, err}
 						} else {
 							// Fallback: single-stage Tool.Execute
@@ -421,6 +428,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 			// Check compaction after each turn
 			MaybeCompact(r.sess, DefaultCompactionConfig())
+			r.sess.EventBus.Emit(Event{Type: EvtSessionCompact})
 
 		case ProvToolCallStart:
 			if _, ok := toolCallBuf[pe.ToolCallID]; !ok {

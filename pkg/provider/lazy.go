@@ -7,6 +7,7 @@ import (
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/testing/faux"
 	"github.com/akzj/tau/providers/anthropic-messages"
+	"github.com/akzj/tau/providers/google-genai"
 	"github.com/akzj/tau/providers/openai-completions"
 )
 
@@ -31,6 +32,9 @@ func NewProviderLoader() *ProviderLoader {
 	})
 	l.RegisterFactory("anthropic", func() (core.Provider, error) {
 		return anthropic_messages.NewAnthropicMessagesProvider()
+	})
+	l.RegisterFactory("google", func() (core.Provider, error) {
+		return google_genai.NewProvider()
 	})
 	l.RegisterFactory("faux", func() (core.Provider, error) {
 		return faux.New(), nil

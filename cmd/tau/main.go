@@ -108,6 +108,8 @@ func main() {
 	switch modelInfo.Provider {
 	case "anthropic":
 		api = core.WireAnthropicMessages
+	case "google":
+		api = core.WireGoogleGenerativeAI
 	default:
 		api = core.WireOpenAICompletions
 	}

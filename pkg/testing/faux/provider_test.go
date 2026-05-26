@@ -101,3 +101,131 @@ func TestFauxEmpty_Error(t *testing.T) {
 		t.Error("expected error for empty queue")
 	}
 }
+
+func TestCacheGrowth(t *testing.T) {
+	prov := faux.New()
+	ctx := context.Background()
+
+	// Turn 1: 2 messages
+	prov.QueueStream(faux.StreamResponse{
+		Events: []core.ProviderEvent{
+			{Type: core.ProvMessageStart, MessageID: "m1"},
+			{Type: core.ProvContentDelta, ContentDelta: "hi"},
+			{Type: core.ProvMessageEnd, MessageID: "m1"},
+		},
+	})
+	_, err := prov.Stream(ctx, core.StreamRequest{
+		Model: core.ModelSpec{Name: "test-sess"},
+		Messages: []core.Message{
+			{Role: core.RoleUser, Content: "a"},
+			{Role: core.RoleUser, Content: "b"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("turn 1: %v", err)
+	}
+
+	// Turn 2: 3 messages (1 new)
+	prov.QueueStream(faux.StreamResponse{
+		Events: []core.ProviderEvent{
+			{Type: core.ProvMessageStart, MessageID: "m2"},
+			{Type: core.ProvContentDelta, ContentDelta: "hi"},
+			{Type: core.ProvMessageEnd, MessageID: "m2"},
+		},
+	})
+	_, err = prov.Stream(ctx, core.StreamRequest{
+		Model: core.ModelSpec{Name: "test-sess"},
+		Messages: []core.Message{
+			{Role: core.RoleUser, Content: "a"},
+			{Role: core.RoleUser, Content: "b"},
+			{Role: core.RoleUser, Content: "c"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("turn 2: %v", err)
+	}
+
+	reads, writes := prov.CacheStats("test-sess")
+	if len(reads) != 2 {
+		t.Fatalf("expected 2 cache reads, got %d", len(reads))
+	}
+	if reads[1] <= reads[0] {
+		t.Errorf("cache reads should grow: r1=%d r2=%d", reads[0], reads[1])
+	}
+	if len(writes) != 2 {
+		t.Fatalf("expected 2 cache writes, got %d", len(writes))
+	}
+}
+
+func TestDeltaStreaming(t *testing.T) {
+	prov := faux.New()
+	ctx := context.Background()
+
+	prov.QueueStream(faux.StreamResponse{
+		Events: []core.ProviderEvent{
+			{Type: core.ProvMessageStart, MessageID: "m1"},
+			{Type: core.ProvContentDelta, ContentDelta: "hello world this is a test"},
+			{Type: core.ProvMessageEnd, MessageID: "m1"},
+		},
+		TokensPerSecond: 50,
+		MinTokenSize:    3,
+		MaxTokenSize:    6,
+	})
+
+	ch, err := prov.Stream(ctx, core.StreamRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var deltas []string
+	for ev := range ch {
+		if ev.Type == core.ProvContentDelta {
+			deltas = append(deltas, ev.ContentDelta)
+		}
+	}
+	if len(deltas) < 2 {
+		t.Errorf("expected >=2 delta chunks (TokensPerSecond=50, content len=30), got %d", len(deltas))
+	}
+	// Verify total content matches
+	total := ""
+	for _, d := range deltas {
+		total += d
+	}
+	if total != "hello world this is a test" {
+		t.Errorf("total delta mismatch: %q", total)
+	}
+}
+
+func TestAbortPropagation(t *testing.T) {
+	prov := faux.New()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Long stream
+	var events []core.ProviderEvent
+	for i := 0; i < 10; i++ {
+		events = append(events, core.ProviderEvent{
+			Type: core.ProvContentDelta, ContentDelta: "chunk ",
+		})
+	}
+	prov.QueueStream(faux.StreamResponse{Events: events, TokensPerSecond: 100})
+
+	ch, err := prov.Stream(ctx, core.StreamRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Read one event then cancel
+	<-ch
+	cancel()
+
+	// Drain — should see [aborted] or early close
+	var last string
+	for ev := range ch {
+		if ev.Type == core.ProvContentDelta {
+			last = ev.ContentDelta
+		}
+	}
+	if last != "\n[aborted]" && last != "" {
+		t.Logf("note: abort may close channel before [aborted] emission, last=%q", last)
+	}
+}

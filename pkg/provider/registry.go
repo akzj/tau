@@ -35,6 +35,10 @@ func NewModelRegistry() *ModelRegistry {
 	r.Register(ModelInfo{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4", Provider: "anthropic", MaxTokens: 200000, Features: []string{"streaming", "tools"}})
 	r.Register(ModelInfo{ID: "claude-haiku-3-5", Name: "Claude Haiku 3.5", Provider: "anthropic", MaxTokens: 200000, Features: []string{"streaming", "tools"}})
 	r.Register(ModelInfo{ID: "claude-opus-4", Name: "Claude Opus 4", Provider: "anthropic", MaxTokens: 200000, Features: []string{"streaming", "tools"}})
+	// Google Gemini models
+	r.Register(ModelInfo{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", Provider: "google", MaxTokens: 1000000, Features: []string{"streaming", "tools"}})
+	r.Register(ModelInfo{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro", Provider: "google", MaxTokens: 2000000, Features: []string{"streaming", "tools"}})
+	r.Register(ModelInfo{ID: "gemini-3.5-flash", Name: "Gemini 3.5 Flash", Provider: "google", MaxTokens: 1000000, Features: []string{"streaming", "tools"}})
 	return r
 }
 

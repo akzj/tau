@@ -6,16 +6,34 @@ import "sync"
 type EventType string
 
 const (
-	EvtTurnStart    EventType = "turn:start"
-	EvtTurnEnd      EventType = "turn:end"
-	EvtMessageStart EventType = "message:start"
-	EvtMessageEnd   EventType = "message:end"
+	EvtTurnStart     EventType = "turn:start"
+	EvtTurnEnd       EventType = "turn:end"
+	EvtMessageStart  EventType = "message:start"
+	EvtMessageEnd    EventType = "message:end"
 	EvtToolCallStart EventType = "tool:start"
-	EvtToolCallEnd  EventType = "tool:end"
-	EvtCompaction   EventType = "compaction"
-	EvtError        EventType = "error"
-	EvtSessionStart EventType = "session:start"
-	EvtSessionEnd   EventType = "session:end"
+	EvtToolCallEnd   EventType = "tool:end"
+	EvtCompaction    EventType = "compaction"
+	EvtError         EventType = "error"
+	EvtSessionStart  EventType = "session:start"
+	EvtSessionEnd    EventType = "session:end"
+
+	// Session lifecycle
+	EvtSessionCompact EventType = "session:compact"
+	EvtSessionFork    EventType = "session:fork"
+	EvtSessionSave    EventType = "session:save"
+	EvtSessionLoad    EventType = "session:load"
+
+	// Tool phases
+	EvtToolPrepare  EventType = "tool:prepare"
+	EvtToolFinalize EventType = "tool:finalize"
+
+	// Provider
+	EvtProviderRequest  EventType = "provider:request"
+	EvtProviderResponse EventType = "provider:response"
+
+	// Steer/FollowUp
+	EvtSteerInjected  EventType = "steer:injected"
+	EvtFollowUpRaised EventType = "followup:raised"
 )
 
 // Event is an emitted event with type and payload.
