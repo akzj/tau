@@ -1,0 +1,134 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/akzj/tau/core"
+	"github.com/akzj/tau/provider"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// 1. Create provider
+	prov, err := provider.NewOpenAICompletionsProvider()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "provider: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 2. Create session
+	sess, err := core.NewSession(ctx, core.SessionOptions{
+		Provider: prov,
+		SystemPrompt: func(s *core.Session) (string, error) {
+			return "You are a helpful assistant. Use tools when needed.", nil
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "session: %v\n", err)
+		os.Exit(1)
+	}
+	defer sess.Cancel()
+
+	// 3. Register echo tool
+	echoSchema := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"msg": {"type": "string", "description": "The message to echo back"}
+		},
+		"required": ["msg"]
+	}`)
+
+	sess.Tools.Register(core.Tool{
+		Name:        "echo",
+		Description: "Echo back the input message.",
+		Schema:      echoSchema,
+		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			// Loop passes json.RawMessage as params
+			var raw json.RawMessage
+			switch v := params.(type) {
+			case json.RawMessage:
+				raw = v
+			case map[string]any:
+				b, _ := json.Marshal(v)
+				raw = b
+			default:
+				return core.ToolResult{}, fmt.Errorf("unexpected params type: %T", params)
+			}
+
+			var args struct{ Msg string }
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return core.ToolResult{}, fmt.Errorf("unmarshal echo args: %w", err)
+			}
+			if args.Msg == "" {
+				args.Msg = "(empty)"
+			}
+			return core.ToolResult{
+				Content: []core.Content{{Type: "text", Text: fmt.Sprintf("ECHO: %s", args.Msg)}},
+			}, nil
+		},
+	})
+	sess.Tools.SetActive([]string{"echo"})
+
+	// 4. Run one turn
+	fmt.Println("=== tau demo: echo tool ===")
+	fmt.Println()
+
+	loop := core.NewLoop()
+	run, err := loop.Prompt(ctx, sess, core.UserInput{Text: "Please use the echo tool with message 'hello tau'"})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "prompt: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 5. Consume events with timeout
+	timeout := time.After(60 * time.Second)
+
+eventLoop:
+	for {
+		select {
+		case ev, ok := <-run.Events():
+			if !ok {
+				break eventLoop
+			}
+			printEvent(ev)
+		case <-timeout:
+			fmt.Println("⏰ Timeout")
+			run.Cancel()
+			break eventLoop
+		case <-ctx.Done():
+			break eventLoop
+		}
+	}
+
+	<-run.Done()
+	fmt.Println()
+	fmt.Println("=== done ===")
+}
+
+func printEvent(ev core.AgentEvent) {
+	switch e := ev.(type) {
+	case core.TurnStart:
+		fmt.Printf("[turn start] id=%s\n", e.TurnID)
+	case core.MessageStart:
+		fmt.Printf("[message start] id=%s role=%s\n", e.MessageID, e.Role)
+	case core.MessageDelta:
+		fmt.Print(e.ContentDelta)
+	case core.MessageEnd:
+		fmt.Printf("\n[message end] id=%s\n", e.MessageID)
+	case core.ToolCallStart:
+		fmt.Printf("[tool call start] call=%s tool=%s\n", e.CallID, e.ToolName)
+	case core.ToolCallEnd:
+		fmt.Printf("[tool call end] call=%s result=%v\n", e.CallID, e.Result.Content)
+	case core.TurnEnd:
+		fmt.Printf("[turn end] id=%s reason=%s\n", e.TurnID, e.Reason)
+	case core.ErrorEvent:
+		fmt.Printf("[ERROR] code=%s err=%v\n", e.Code, e.Err)
+	default:
+		fmt.Printf("[unknown event] %T\n", ev)
+	}
+}
