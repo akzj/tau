@@ -74,7 +74,7 @@ func (p *Provider) Stream(ctx context.Context, req core.StreamRequest) (<-chan c
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, classifyError(resp.StatusCode, bodyBytes)
 	}
 
 	events := make(chan core.ProviderEvent, 64)
@@ -108,7 +108,7 @@ func (p *Provider) Complete(ctx context.Context, req core.CompleteRequest) (core
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return core.CompleteResponse{}, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return core.CompleteResponse{}, classifyError(resp.StatusCode, bodyBytes)
 	}
 
 	var result struct {
@@ -227,16 +227,18 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 			Response struct {
 				ID     string `json:"id"`
 				Output []struct {
-					Type    string `json:"type"`
-					Content []struct {
+					Type      string `json:"type"`
+					Content   []struct {
 						Text string `json:"text"`
 					} `json:"content"`
-					Name string `json:"name"`
-					ID   string `json:"id"`
+					Name      string `json:"name"`
+					ID        string `json:"id"`
+					Arguments string `json:"arguments"`
 				} `json:"output"`
 			} `json:"response"`
 			Item struct {
-				ID string `json:"id"`
+				ID   string `json:"id"`
+				Type string `json:"type"`
 			} `json:"item"`
 			Delta string `json:"delta"`
 		}
@@ -250,6 +252,7 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 		case "response.created":
 			msgID = event.Response.ID
 			events <- core.ProviderEvent{Type: core.ProvMessageStart, MessageID: msgID}
+			// Tool calls may appear in response.output on creation
 			for _, o := range event.Response.Output {
 				if o.Type == "function_call" {
 					events <- core.ProviderEvent{
@@ -261,6 +264,16 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 				}
 			}
 
+		case "response.output_item.added":
+			// New output item — if function_call, emit tool call start
+			if event.Item.Type == "function_call" {
+				events <- core.ProviderEvent{
+					Type:      core.ProvToolCallStart,
+					MessageID: msgID,
+					ToolCallID: event.Item.ID,
+				}
+			}
+
 		case "response.output_text.delta":
 			events <- core.ProviderEvent{
 				Type:         core.ProvContentDelta,
@@ -268,7 +281,28 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 				ContentDelta: event.Delta,
 			}
 
+		case "response.output_item.done":
+			// Output item completed — if function_call with arguments, emit delta+end
+			if event.Item.Type == "function_call" {
+				for _, o := range event.Response.Output {
+					if o.Type == "function_call" && o.Arguments != "" {
+						events <- core.ProviderEvent{
+							Type:          core.ProvToolCallDelta,
+							MessageID:     msgID,
+							ToolCallID:    o.ID,
+							ToolArgsDelta: o.Arguments,
+						}
+					}
+				}
+				events <- core.ProviderEvent{
+					Type:       core.ProvToolCallEnd,
+					MessageID:  msgID,
+					ToolCallID: event.Item.ID,
+				}
+			}
+
 		case "response.completed":
+			// Final tool call cleanup for any remaining function_calls
 			for _, o := range event.Response.Output {
 				if o.Type == "function_call" {
 					events <- core.ProviderEvent{
@@ -288,6 +322,25 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 	if msgID != "" {
 		events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
 	}
+}
+
+// Responses API supports multimodal inputs (images) natively via `input` array.
+// Currently converting messages to plain text; image support can be added
+// by populating input as [{type: "input_text", text: ...}, {type: "input_image", image_url: ...}].
+
+// classifyError produces structured error messages for HTTP errors.
+func classifyError(statusCode int, body []byte) error {
+	msg := string(body)
+	if statusCode == 429 {
+		return fmt.Errorf("rate limited (429): %s", msg)
+	}
+	if statusCode >= 500 {
+		return fmt.Errorf("server error (%d): %s", statusCode, msg)
+	}
+	if statusCode == 401 || statusCode == 403 {
+		return fmt.Errorf("auth error (%d): %s", statusCode, msg)
+	}
+	return fmt.Errorf("API error %d: %s", statusCode, msg)
 }
 
 func messagesToText(msgs []core.Message) string {
