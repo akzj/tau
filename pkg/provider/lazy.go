@@ -9,9 +9,11 @@ import (
 	"github.com/akzj/tau/providers/anthropic-messages"
 	"github.com/akzj/tau/providers/azure-openai"
 	"github.com/akzj/tau/providers/bedrock"
+	"github.com/akzj/tau/providers/codex-responses"
 	"github.com/akzj/tau/providers/google-genai"
 	"github.com/akzj/tau/providers/mistral"
 	"github.com/akzj/tau/providers/openai-completions"
+	"github.com/akzj/tau/providers/openai-responses"
 	"github.com/akzj/tau/providers/vertex-ai"
 )
 
@@ -53,6 +55,12 @@ func NewProviderLoader() *ProviderLoader {
 	})
 	l.RegisterFactory("vertex", func() (core.Provider, error) {
 		return vertex_ai.NewProvider()
+	})
+	l.RegisterFactory("openai-responses", func() (core.Provider, error) {
+		return openai_responses.NewProvider()
+	})
+	l.RegisterFactory("codex", func() (core.Provider, error) {
+		return codex_responses.NewProvider()
 	})
 	l.RegisterFactory("faux", func() (core.Provider, error) {
 		return faux.New(), nil
