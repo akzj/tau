@@ -85,7 +85,9 @@ func EditTool() core.Tool {
 			os.MkdirAll(backupDir, 0755)
 			ts := time.Now().UTC().Format("20060102T150405")
 			backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.%s.bak", filepath.Base(args.FilePath), ts))
-			os.WriteFile(backupPath, data, 0644)
+			if err := os.WriteFile(backupPath, data, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "  [edit] backup write failed (non-fatal): %v\n", err)
+			}
 
 			replaced := strings.Replace(content, args.Old, args.New, args.N)
 			if err := os.WriteFile(args.FilePath, []byte(replaced), 0644); err != nil {

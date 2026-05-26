@@ -73,7 +73,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case "prompt":
 			if msg.Text != "" {
-				go s.runTurn(ctx, conn, loop, sess, msg.Text)
+				s.runMu.Lock()
+				if s.activeRun != nil {
+					s.activeRun() // cancel previous turn
+				}
+				turnCtx, turnCancel := context.WithCancel(ctx)
+				s.activeRun = turnCancel
+				s.runMu.Unlock()
+				go s.runTurn(turnCtx, conn, loop, sess, msg.Text)
 			}
 		case "new_session":
 			sess.Cancel()

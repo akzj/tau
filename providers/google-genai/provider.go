@@ -332,6 +332,7 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 
 		var chunk geminiChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE json: %w", err)}
 			continue
 		}
 

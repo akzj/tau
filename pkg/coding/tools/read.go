@@ -68,7 +68,7 @@ func ReadTool() core.Tool {
 
 			data, err := os.ReadFile(args.FilePath)
 			if err != nil {
-				return core.ToolResult{}, fmt.Errorf("read %s: file not found (workspace: %s)", prepared.Params, WorkspaceRoot)
+				return core.ToolResult{}, fmt.Errorf("read %s: file not found (workspace: %s)", args.FilePath, WorkspaceRoot)
 			}
 
 			if len(data) > args.MaxBytes {

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -28,7 +29,10 @@ func LoadConfig() Config {
 		return cfg
 	}
 
-	yaml.Unmarshal(data, &cfg)
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox: config parse error: %v\n", err)
+		return Config{Sandbox: "none"}
+	}
 	return cfg
 }
 

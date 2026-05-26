@@ -42,17 +42,27 @@ func Save(id string, msgs []core.Message) error {
 		return err
 	}
 	path := filepath.Join(dir, id+".jsonl")
-	f, err := os.Create(path)
+	tmpPath := path + ".tmp"
+	f, err := os.Create(tmpPath)
 	if err != nil {
-		return fmt.Errorf("create: %w", err)
+		return fmt.Errorf("create tmp: %w", err)
 	}
-	defer f.Close()
 
 	enc := json.NewEncoder(f)
 	for _, m := range msgs {
 		if err := enc.Encode(m); err != nil {
+			f.Close()
+			os.Remove(tmpPath)
 			return fmt.Errorf("encode: %w", err)
 		}
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename: %w", err)
 	}
 	return nil
 }
@@ -75,7 +85,9 @@ func Load(id string) ([]core.Message, error) {
 	for scanner.Scan() {
 		var m core.Message
 		if err := json.Unmarshal(scanner.Bytes(), &m); err != nil {
-			return nil, fmt.Errorf("decode line: %w", err)
+			// Skip corrupt line, don't abort entire load
+			fmt.Fprintf(os.Stderr, "persist: skipping corrupt line in session %s: %v\n", id, err)
+			continue
 		}
 		msgs = append(msgs, m)
 	}

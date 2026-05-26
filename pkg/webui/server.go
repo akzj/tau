@@ -1,12 +1,15 @@
 package webui
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/akzj/tau/core"
@@ -24,6 +27,8 @@ type Server struct {
 	provider  core.Provider
 	upgrader  websocket.Upgrader
 	wsMu      sync.Mutex // protects concurrent WebSocket writes
+	activeRun context.CancelFunc
+	runMu     sync.Mutex // protects activeRun
 }
 
 // NewServer creates a webui server.
@@ -39,13 +44,25 @@ func NewServer(addr, workspace, model string, prov core.Provider) *Server {
 	}
 }
 
-// Start begins listening.
+// Start begins listening with graceful shutdown on SIGINT.
 func (s *Server) Start() error {
 	http.HandleFunc("/", s.handleIndex)
 	http.HandleFunc("/ws", s.handleWebSocket)
 	http.HandleFunc("/sessions", s.handleSessionList)
+
+	srv := &http.Server{Addr: s.addr, Handler: nil}
+
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt)
+		<-sig
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
+
 	fmt.Fprintf(os.Stderr, "tau webui: http://%s\n", s.addr)
-	return http.ListenAndServe(s.addr, nil)
+	return srv.ListenAndServe()
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
