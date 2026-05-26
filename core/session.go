@@ -46,6 +46,7 @@ type Session struct {
 	TreeEntries   []TreeEntry     // session tree entries
 	SteerQueue    []SteerEntry    // pending steer instructions
 	followUpQueue []FollowUpEntry // pending follow-up questions
+	ActiveTools   []string        // if non-empty, only these tools are sent to LLM
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
@@ -136,4 +137,15 @@ func (s *Session) DrainSteers() ([]SteerEntry, string) {
 		parts = append(parts, e.Message)
 	}
 	return entries, strings.Join(parts, "\n")
+}
+
+// SetTools restricts which tools the LLM can see.
+// Pass nil or empty to restore all registered tools.
+func (s *Session) SetTools(names []string) {
+	s.ActiveTools = names
+}
+
+// GetActiveTools returns the current active tool list (nil means all).
+func (s *Session) GetActiveTools() []string {
+	return s.ActiveTools
 }

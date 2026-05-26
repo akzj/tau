@@ -40,6 +40,7 @@ type model struct {
 	err           error
 	initialPrompt string // if non-empty, auto-submit on start
 	turnCount     int    // number of completed turns
+	activeTools   []string // current active tool set
 }
 
 // turnCompleteMsg signals the turn loop finished.

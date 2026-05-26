@@ -76,6 +76,10 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	// 3. Build tool specs from active tools
 	var toolSpecs []ToolSpec
 	for _, t := range sess.Tools.Active() {
+		// Filter by Session.ActiveTools if set
+		if len(sess.ActiveTools) > 0 && !contains(sess.ActiveTools, t.Name) {
+			continue
+		}
 		schemaJSON, err := t.Schema.Marshal()
 		if err != nil {
 			return nil, fmt.Errorf("tool %s schema marshal: %w", t.Name, err)
@@ -429,4 +433,13 @@ func resultText(result ToolResult) string {
 		}
 	}
 	return ""
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
