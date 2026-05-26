@@ -341,7 +341,9 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 			}
 		}
 	}
-
+if err := scanner.Err(); err != nil {
+		events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
+	}
 	// Emit final events
 	if msgID != "" {
 		events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}

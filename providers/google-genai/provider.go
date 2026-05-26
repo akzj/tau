@@ -368,5 +368,9 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 			}
 		}
 	}
+
+	if err := scanner.Err(); err != nil {
+		events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
+	}
 	events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
 }

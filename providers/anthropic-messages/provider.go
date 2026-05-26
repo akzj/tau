@@ -409,7 +409,9 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 		}
 		// Empty lines or comment lines are ignored
 	}
-	// Flush final event
+if err := scanner.Err(); err != nil {
+		events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
+	}	// Flush final event
 	flush()
 }
 

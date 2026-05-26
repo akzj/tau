@@ -77,14 +77,7 @@ func (b *bashThreePhase) Prepare(ctx context.Context, callID string, params any)
 		args.TimeoutSeconds = 120
 	}
 
-	workDir := WorkspaceRoot
-	if args.WorkDir != "" {
-		var err error
-		workDir, err = ResolvePath(args.WorkDir)
-		if err != nil {
-			return core.PreparedTool{}, err
-		}
-// Git safety: block or warn on destructive git commands
+	// Git safety: block or warn on destructive git commands — must run BEFORE WorkDir resolution
 	cmdLower := strings.TrimSpace(args.Command)
 	for _, op := range gitDestructiveOps {
 		if strings.Contains(cmdLower, op.pattern) {
@@ -94,7 +87,16 @@ func (b *bashThreePhase) Prepare(ctx context.Context, callID string, params any)
 			fmt.Fprintf(os.Stderr, "  [git safety] WARNING: %s\n", op.message)
 			break
 		}
-	}	}
+	}
+
+	workDir := WorkspaceRoot
+	if args.WorkDir != "" {
+		var err error
+		workDir, err = ResolvePath(args.WorkDir)
+		if err != nil {
+			return core.PreparedTool{}, err
+		}
+	}
 
 	return core.PreparedTool{
 		CallID:   callID,
