@@ -47,6 +47,18 @@ type ToolResultEvent struct {
 	Err    error
 }
 
+// ToolResultPatch allows AfterToolCall handlers to modify individual result fields.
+// Unlike ToolResultEvent (full-replace chain), this provides field-level patching
+// for Content, Details, IsError, and Terminate separately.
+// Fields left at their zero value are not modified.
+type ToolResultPatch struct {
+	CallID    string
+	Content   []Content      `json:"content,omitempty"`   // if non-nil, replaces entire Content
+	Details   map[string]any `json:"details,omitempty"`    // merged on top of existing Details
+	IsError   bool           `json:"isError,omitempty"`    // if true, marks result as error
+	Terminate bool           `json:"terminate,omitempty"`  // if true, signals loop stop
+}
+
 // CompactionRequest is passed to BeforeCompaction hooks when the transcript
 // exceeds the configured token threshold. The handler produces a summary;
 // core replaces messages before FirstKeptEntryID with the summary.

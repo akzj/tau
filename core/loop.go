@@ -463,7 +463,10 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 					execTool(ce.idx, ce.tc)
 				}
 
-				// Emit results in deterministic order; buffer for transcript
+				// Emit results in deterministic order (original pendingToolCalls ordering).
+				// Parallel execution completes in arbitrary order, but results are indexed by
+				// original position and emitted in source order. This guarantees that the
+				// product layer sees tool results in the same order the LLM requested them.
 				for _, tr := range results {
 					// Fire AfterToolResult hook
 					if r.sess.Hooks.AfterToolResult != nil {
