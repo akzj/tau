@@ -86,7 +86,7 @@ func (p *Provider) Stream(ctx context.Context, req core.StreamRequest) (<-chan c
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, classifyHTTPError(resp.StatusCode, bodyBytes)
 	}
 
 	events := make(chan core.ProviderEvent, 64)
@@ -120,7 +120,7 @@ func (p *Provider) Complete(ctx context.Context, req core.CompleteRequest) (core
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return core.CompleteResponse{}, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return core.CompleteResponse{}, classifyHTTPError(resp.StatusCode, bodyBytes)
 	}
 
 	var result struct {
@@ -224,6 +224,13 @@ func buildToolDeclarations(tools []core.ToolSpec, transform func(string) string)
 // buildContents converts tau Messages into Gemini contents array.
 // Role mapping: core.RoleUser→"user", core.RoleAssistant→"model", core.RoleTool→"function".
 // System messages are skipped (handled via systemInstruction).
+//
+// Note: Gemini supports multimodal image inputs via inlineData parts:
+//
+//	{"inlineData": {"mimeType": "image/png", "data": "<base64>"}}
+//
+// This is not yet plumbed through tau's Message struct; when tau adds
+// an Attachment/ContentPart model, wire inlineData parts here.
 func buildContents(msgs []core.Message) []map[string]any {
 	// First pass: build a map of callID → toolName for functionResponse matching.
 	callName := make(map[string]string)
@@ -290,6 +297,20 @@ func buildContents(msgs []core.Message) []map[string]any {
 		}
 	}
 	return contents
+}
+
+// classifyHTTPError returns a descriptive error based on HTTP status code.
+func classifyHTTPError(statusCode int, body []byte) error {
+	switch {
+	case statusCode == 429:
+		return fmt.Errorf("rate limited (429): %s", string(body))
+	case statusCode == 401 || statusCode == 403:
+		return fmt.Errorf("auth error (%d): %s", statusCode, string(body))
+	case statusCode >= 500:
+		return fmt.Errorf("server error (%d): %s", statusCode, string(body))
+	default:
+		return fmt.Errorf("API error %d: %s", statusCode, string(body))
+	}
 }
 
 // --- SSE parsing ---
