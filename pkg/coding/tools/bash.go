@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -14,7 +15,21 @@ import (
 	"github.com/akzj/tau/pkg/sandbox"
 )
 
-// bashPrepared holds validated params for the bash three-phase flow.
+// gitDestructiveOps is the set of git commands that should be blocked or warned.
+var gitDestructiveOps = []struct {
+	pattern string // substring to match
+	block   bool   // true = reject, false = warn
+	message string
+}{
+	{"git push --force", true, "force push to remote"},
+	{"git push -f", true, "force push to remote"},
+	{"git push --force-with-lease", false, "force push with lease (safer)"},
+	{"git reset --hard", true, "hard reset (discards working tree)"},
+	{"git clean -fd", true, "force clean untracked files"},
+	{"git clean -fdx", true, "force clean including ignored"},
+	{"git commit --amend", false, "amend commit"},
+	{"git rebase --hard", true, "hard rebase"},
+}// bashPrepared holds validated params for the bash three-phase flow.
 type bashPrepared struct {
 	Command        string
 	WorkDir        string
@@ -56,7 +71,17 @@ func (b *bashThreePhase) Prepare(ctx context.Context, callID string, params any)
 		if err != nil {
 			return core.PreparedTool{}, err
 		}
-	}
+// Git safety: block or warn on destructive git commands
+	cmdLower := strings.TrimSpace(args.Command)
+	for _, op := range gitDestructiveOps {
+		if strings.Contains(cmdLower, op.pattern) {
+			if op.block {
+				return core.PreparedTool{}, fmt.Errorf("BLOCKED: %s — use safer alternatives or override via --allow-dangerous", op.message)
+			}
+			fmt.Fprintf(os.Stderr, "  [git safety] WARNING: %s\n", op.message)
+			break
+		}
+	}	}
 
 	return core.PreparedTool{
 		CallID:   callID,
