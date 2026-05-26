@@ -65,6 +65,7 @@ type Session struct {
 	Memory        *MemorySystem       // 3-layer memory system (nil = disabled)
 	YesMode       bool                // --yes mode (skip all confirmation)
 	Strategy      AgentStrategy       // pluggable reasoning strategy
+	SkillLoader   *SkillLoader        // skill loader (lazy init in loop)
 	ctx           context.Context
 	cancel        context.CancelFunc
 }

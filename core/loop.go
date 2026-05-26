@@ -1,6 +1,7 @@
 package core
 
 import (
+	"os"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -120,6 +121,23 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		}
 	}
 
+	// Skills: lazy-init loader and inject matched skills
+	if sess.SkillLoader == nil {
+		sess.SkillLoader = NewSkillLoader("pkg/coding/skills/builtin", "pkg/coding/skills/prompts")
+	}
+	if sess.SkillLoader != nil {
+		toolNames := make([]string, 0, len(sess.Tools.Active()))
+		for _, t := range sess.Tools.Active() {
+			toolNames = append(toolNames, t.Name)
+		}
+		skills := sess.SkillLoader.MatchSkills(toolNames, input.Text, 5, 200)
+		if len(skills) > 0 {
+			skillsBlock := FormatSkills(skills)
+			systemPrompt += "\n\n" + skillsBlock
+			fmt.Fprintf(os.Stderr, "[skills] injected %d skills into system prompt\n", len(skills))
+		}
+	}
+
 	// 3. Build tool specs from active tools
 	var toolSpecs []ToolSpec
 	for _, t := range sess.Tools.Active() {
@@ -214,6 +232,19 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 		summary := sess.Memory.Working.Summarize()
 		if summary != "" && summary != "(empty)" {
 			systemPrompt += "\n\n[Working Memory]\n" + summary
+		}
+	}
+
+	// Skills: inject matched skills
+	if sess.SkillLoader != nil {
+		toolNames := make([]string, 0, len(sess.Tools.Active()))
+		for _, t := range sess.Tools.Active() {
+			toolNames = append(toolNames, t.Name)
+		}
+		skills := sess.SkillLoader.MatchSkills(toolNames, "", 5, 200)
+		if len(skills) > 0 {
+			skillsBlock := FormatSkills(skills)
+			systemPrompt += "\n\n" + skillsBlock
 		}
 	}
 
