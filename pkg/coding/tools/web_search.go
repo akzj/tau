@@ -4,10 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"time"
 
 	"github.com/akzj/tau/core"
 )
@@ -43,61 +39,27 @@ func WebSearchTool() core.Tool {
 				return core.ToolResult{}, fmt.Errorf("query required")
 			}
 
-			// DuckDuckGo Instant Answer API
-			apiURL := "https://api.duckduckgo.com/?q=" + url.QueryEscape(args.Query) + "&format=json&no_html=1&skip_disambig=1"
-
-			req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-			if err != nil {
-				return core.ToolResult{}, err
+			if core.DefaultSearchProvider == nil {
+				return core.ToolResult{}, fmt.Errorf("search not available")
 			}
-			req.Header.Set("User-Agent", "tau/0.1")
 
-			client := &http.Client{Timeout: 10 * time.Second}
-			resp, err := client.Do(req)
+			results, err := core.DefaultSearchProvider.Search(ctx, args.Query)
 			if err != nil {
 				return core.ToolResult{}, fmt.Errorf("search: %w", err)
 			}
-			defer resp.Body.Close()
 
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-			if err != nil {
-				return core.ToolResult{}, err
-			}
-
-			var result struct {
-				Abstract      string `json:"Abstract"`
-				AbstractURL   string `json:"AbstractURL"`
-				Heading       string `json:"Heading"`
-				Answer        string `json:"Answer"`
-				RelatedTopics []struct {
-					Text string `json:"Text"`
-				} `json:"RelatedTopics"`
-			}
-			json.Unmarshal(body, &result)
-
-			output := fmt.Sprintf("## %s\n\n", args.Query)
-			if result.Answer != "" {
-				output += fmt.Sprintf("**Answer**: %s\n\n", result.Answer)
-			}
-			if result.Abstract != "" {
-				output += fmt.Sprintf("%s\n", result.Abstract)
-				if result.AbstractURL != "" {
-					output += fmt.Sprintf("\nSource: %s\n", result.AbstractURL)
-				}
-			}
-			if len(result.RelatedTopics) > 0 {
-				output += "\n### Related\n"
-				for i, t := range result.RelatedTopics {
-					if i >= 5 {
-						break
-					}
-					output += fmt.Sprintf("- %s\n", t.Text)
+			output := fmt.Sprintf("## Web Search: %s\n\n", args.Query)
+			if len(results) == 0 {
+				output += "No results found."
+			} else {
+				for i, r := range results {
+					output += fmt.Sprintf("%d. **%s**\n   %s\n   %s\n\n", i+1, r.Title, r.Snippet, r.URL)
 				}
 			}
 
 			return core.ToolResult{
 				Content: []core.Content{{Type: "text", Text: output}},
-				Details: map[string]any{"query": args.Query, "has_answer": result.Answer != ""},
+				Details: map[string]any{"query": args.Query, "results": len(results)},
 			}, nil
 		},
 	}
