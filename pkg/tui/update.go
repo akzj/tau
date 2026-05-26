@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/akzj/tau/core"
+	"github.com/akzj/tau/pkg/persist"
 )
 
 // Update implements tea.Model.
@@ -15,6 +17,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			m.session.Cancel()
 			return m, tea.Quit
+
+		case "ctrl+l":
+			m.messages = nil
+			m.streaming = ""
+			m.tools = make(map[string]toolState)
+			m.turnCount = 0
+			return m, nil
+
+		case "ctrl+s":
+			id := persist.NewID()
+			msgs := m.session.Transcript.Messages()
+			if err := persist.Save(id, msgs); err == nil {
+				m.messages = append(m.messages, line{Role: "system", Content: fmt.Sprintf("session saved: %s (%d msgs)", id, len(msgs))})
+			} else {
+				m.messages = append(m.messages, line{Role: "system", Content: fmt.Sprintf("save failed: %v", err)})
+			}
+			return m, nil
 
 		case "enter":
 			input := m.input.Value()
@@ -98,6 +117,7 @@ func (m *model) handleAgentEvent(ev core.AgentEvent) tea.Cmd {
 		m.status = "streaming"
 
 	case core.TurnEnd:
+		m.turnCount++
 		if e.Reason == "complete" {
 			m.status = "idle"
 		}

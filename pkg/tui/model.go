@@ -38,6 +38,7 @@ type model struct {
 	agentChan     chan any // bridge: agent goroutine → TUI (core.AgentEvent | turnCompleteMsg)
 	err           error
 	initialPrompt string // if non-empty, auto-submit on start
+	turnCount     int    // number of completed turns
 }
 
 // turnCompleteMsg signals the turn loop finished.
