@@ -117,6 +117,10 @@ func main() {
 		pluginCommand(flag.Args()[1:])
 		return
 	}
+	if flag.NArg() > 0 && flag.Arg(0) == "doctor" {
+		doctorCommand(flag.Args()[1:])
+		return
+	}
 
 	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools && !*listSkills && !*versionFlag {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
