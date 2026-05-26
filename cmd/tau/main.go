@@ -15,8 +15,7 @@ import (
 	"github.com/akzj/tau/pkg/tui"
 	"github.com/akzj/tau/pkg/webui"
 	"github.com/akzj/tau/pkg/persist"
-	"github.com/akzj/tau/providers/anthropic-messages"
-	"github.com/akzj/tau/providers/openai-completions"
+	"github.com/akzj/tau/pkg/provider"
 )
 
 func main() {
@@ -80,28 +79,36 @@ func main() {
 
 	ctx := context.Background()
 
-	// Create provider
-	var prov core.Provider
+	// Initialize provider system (--provider flag preserved for backward compat;
+	// provider is now auto-resolved from --model via the model registry)
+	_ = providerName
+	loader := provider.NewProviderLoader()
+	modelReg := provider.NewModelRegistry()
+
+	// Lookup model info
+	modelInfo, ok := modelReg.Lookup(*model)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "unknown model: %s\n", *model)
+		fmt.Fprintf(os.Stderr, "Available models:\n")
+		for _, info := range modelReg.List("") {
+			fmt.Fprintf(os.Stderr, "  %-20s %s (%s)\n", info.ID, info.Name, info.Provider)
+		}
+		os.Exit(1)
+	}
+
+	// Load provider
+	prov, err := loader.Load(modelInfo.Provider)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "provider %s: %v\n", modelInfo.Provider, err)
+		os.Exit(1)
+	}
+
+	// Determine WireAPI from provider
 	var api core.WireAPI
-	switch *providerName {
+	switch modelInfo.Provider {
 	case "anthropic":
-		p, err := anthropic_messages.NewAnthropicMessagesProvider()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "provider: %v\n", err)
-			os.Exit(1)
-		}
-		prov = p
 		api = core.WireAnthropicMessages
-		if *model == "gpt-5.4" {
-			*model = "claude-sonnet-4-6"
-		}
 	default:
-		p, err := openai_completions.NewOpenAICompletionsProvider()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "provider: %v\n", err)
-			os.Exit(1)
-		}
-		prov = p
 		api = core.WireOpenAICompletions
 	}
 
