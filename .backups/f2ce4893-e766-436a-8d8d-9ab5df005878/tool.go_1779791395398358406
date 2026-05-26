@@ -43,18 +43,11 @@ type ToolExecuteFn func(
 	onUpdate func(PartialResult),
 ) (ToolResult, error)
 
-// ToolSchema is the three-in-one contract: typed Go struct, LLM JSON Schema, runtime validator.
-// Implementations live in toolspec/ (codegen-generated).
-type ToolSchema interface {
-	Marshal() (json.RawMessage, error)        // → LLM-facing JSON Schema
-	Validate(raw json.RawMessage) (any, error) // ← LLM-returned JSON → validated+decoded
-}
-
 // Tool is the canonical tool abstraction.
 type Tool struct {
 	Name        string
 	Description string
-	Schema      ToolSchema // JSON Schema for LLM (implements Marshal/Validate)
+	Schema      json.RawMessage // JSON Schema for LLM
 	Execute     ToolExecuteFn
 	PrepareArgs func(raw json.RawMessage) (any, error) // optional pre-validate
 	Mode        ExecutionMode

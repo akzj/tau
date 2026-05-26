@@ -67,14 +67,10 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	// 3. Build tool specs from active tools
 	var toolSpecs []ToolSpec
 	for _, t := range sess.Tools.Active() {
-		schemaJSON, err := t.Schema.Marshal()
-		if err != nil {
-			return nil, fmt.Errorf("tool %s schema marshal: %w", t.Name, err)
-		}
 		toolSpecs = append(toolSpecs, ToolSpec{
 			Name:        t.Name,
 			Description: t.Description,
-			Schema:      schemaJSON,
+			Schema:      t.Schema,
 		})
 	}
 
