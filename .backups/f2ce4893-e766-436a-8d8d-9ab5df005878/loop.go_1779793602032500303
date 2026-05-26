@@ -109,61 +109,8 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 }
 
 // Continue resumes a session — skeleton for demo.
-// Continue resumes a session after tool calls complete, sending results back to the LLM.
-// It does NOT add a user message — the transcript already contains assistant tool_calls + tool results.
 func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error) {
-	// 1. Build system prompt
-	systemPrompt := ""
-	if sess.SystemPrompt != nil {
-		sp, err := sess.SystemPrompt(sess)
-		if err != nil {
-			return nil, fmt.Errorf("system prompt: %w", err)
-		}
-		systemPrompt = sp
-	}
-
-	// 2. Build tool specs from active tools
-	var toolSpecs []ToolSpec
-	for _, t := range sess.Tools.Active() {
-		schemaJSON, err := t.Schema.Marshal()
-		if err != nil {
-			return nil, fmt.Errorf("tool %s schema marshal: %w", t.Name, err)
-		}
-		toolSpecs = append(toolSpecs, ToolSpec{
-			Name:        t.Name,
-			Description: t.Description,
-			Schema:      schemaJSON,
-		})
-	}
-
-	// 3. Build stream request from current transcript (already has tool results)
-	// TODO: hardcoded model — demo only uses one provider
-	req := StreamRequest{
-		Model: ModelSpec{
-			Name: "gpt-5.4",
-			API:  WireOpenAICompletions,
-		},
-		Messages:     sess.Transcript.Messages(),
-		Tools:        toolSpecs,
-		SystemPrompt: systemPrompt,
-	}
-
-	// 4. Call provider
-	provEvents, err := sess.Provider.Stream(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("provider stream: %w", err)
-	}
-
-	// 5. Build Run
-	run := &Run{
-		loop:   l,
-		sess:   sess,
-		events: make(chan AgentEvent, 64),
-		done:   make(chan struct{}),
-	}
-
-	go run.processProviderEvents(ctx, provEvents, req)
-	return run, nil
+	return nil, fmt.Errorf("not implemented")
 }
 
 // Run represents an in-flight turn.
