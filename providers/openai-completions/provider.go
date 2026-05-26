@@ -81,7 +81,7 @@ func (p *OpenAICompletionsProvider) Stream(ctx context.Context, req core.StreamR
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, classifyError(resp.StatusCode, bodyBytes)
 	}
 
 	events := make(chan core.ProviderEvent, 64)
@@ -358,6 +358,22 @@ if err := scanner.Err(); err != nil {
 		events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
 	}
 
+}
+
+
+// classifyError produces structured error messages for HTTP errors.
+func classifyError(statusCode int, body []byte) error {
+	msg := string(body)
+	if statusCode == 429 {
+		return fmt.Errorf("rate limited (429): %s", msg)
+	}
+	if statusCode >= 500 {
+		return fmt.Errorf("server error (%d): %s", statusCode, msg)
+	}
+	if statusCode == 401 || statusCode == 403 {
+		return fmt.Errorf("auth error (%d): %s", statusCode, msg)
+	}
+	return fmt.Errorf("API error %d: %s", statusCode, msg)
 }
 
 // --- message building ---
