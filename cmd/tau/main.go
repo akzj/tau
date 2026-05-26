@@ -31,6 +31,7 @@ func main() {
 	webuiMode := flag.Bool("webui", false, "Launch Web UI")
 	addr := flag.String("addr", ":8080", "Web UI listen address")
 	resumeID := flag.String("resume", "", "Resume a saved session by ID")
+	steerMsg := flag.String("steer", "", "Inject a steer instruction (for use with --resume)")
 	listSessions := flag.Bool("list-sessions", false, "List saved sessions")
 	flag.Parse()
 
@@ -135,6 +136,14 @@ func main() {
 		sess.Session.Transcript.Append(msgs...)
 		if *verbose {
 			fmt.Fprintf(os.Stderr, "[resumed %s] (%d messages)\n", *resumeID, len(msgs))
+		}
+	}
+
+	// Inject steer instruction if provided with --resume
+	if *steerMsg != "" {
+		sess.Session.Steer(*steerMsg)
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "[steer] %s\n", *steerMsg)
 		}
 	}
 

@@ -54,6 +54,15 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	}
 	sess.Transcript.Append(userMsg)
 
+	// Consume steer queue — inject as system message before this turn
+	if _, steerText := sess.DrainSteers(); steerText != "" {
+		sess.Transcript.Append(Message{
+			Role:      RoleSystem,
+			Content:   "[User direction]\n" + steerText,
+			MessageID: generateMsgID(),
+		})
+	}
+
 	// 2. Build system prompt
 	systemPrompt := ""
 	if sess.SystemPrompt != nil {

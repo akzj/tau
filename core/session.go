@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -15,23 +16,38 @@ type SystemPromptFn func(sess *Session) (string, error)
 // SessionOptions configures a new Session.
 type SessionOptions struct {
 	SystemPrompt SystemPromptFn
-	Provider     Provider   // direct provider reference for demo simplicity
-	DefaultModel ModelSpec  // default model for Loop turns
+	Provider     Provider  // direct provider reference for demo simplicity
+	DefaultModel ModelSpec // default model for Loop turns
+}
+
+// SteerEntry is a pending steer instruction.
+type SteerEntry struct {
+	Message string
+	ID      string
+	Time    time.Time
+}
+
+// FollowUpEntry is a pending follow-up question.
+type FollowUpEntry struct {
+	Question string
+	ID       string
 }
 
 // Session is the unit of isolation. All mutable state lives here.
 type Session struct {
-	ID           SessionID
-	Transcript   *Transcript
-	Tools        *ToolRegistry
-	Providers    *ProviderRegistry
-	Hooks        *HookSet
-	SystemPrompt SystemPromptFn
-	Provider     Provider
-	DefaultModel ModelSpec
-	TreeEntries  []TreeEntry // session tree entries
-	ctx          context.Context
-	cancel       context.CancelFunc
+	ID            SessionID
+	Transcript    *Transcript
+	Tools         *ToolRegistry
+	Providers     *ProviderRegistry
+	Hooks         *HookSet
+	SystemPrompt  SystemPromptFn
+	Provider      Provider
+	DefaultModel  ModelSpec
+	TreeEntries   []TreeEntry     // session tree entries
+	SteerQueue    []SteerEntry    // pending steer instructions
+	followUpQueue []FollowUpEntry // pending follow-up questions
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 // NewSession creates a new Session.
@@ -85,4 +101,39 @@ func (s *Session) AddEntry(entry TreeEntry) {
 		s.Hooks.BeforeSessionTree.Run(s.ctx, entry)
 	}
 	s.TreeEntries = append(s.TreeEntries, entry)
+}
+
+// Steer injects a direction instruction into the session. Consumed next turn.
+func (s *Session) Steer(message string) SteerEntry {
+	entry := SteerEntry{
+		Message: message,
+		ID:      generateID(),
+		Time:    time.Now(),
+	}
+	s.SteerQueue = append(s.SteerQueue, entry)
+	return entry
+}
+
+// FollowUp injects a follow-up question.
+func (s *Session) FollowUp(question string) FollowUpEntry {
+	entry := FollowUpEntry{
+		Question: question,
+		ID:       generateID(),
+	}
+	s.followUpQueue = append(s.followUpQueue, entry)
+	return entry
+}
+
+// DrainSteers consumes all pending steer entries and returns them as a system message.
+func (s *Session) DrainSteers() ([]SteerEntry, string) {
+	if len(s.SteerQueue) == 0 {
+		return nil, ""
+	}
+	entries := s.SteerQueue
+	s.SteerQueue = nil
+	var parts []string
+	for _, e := range entries {
+		parts = append(parts, e.Message)
+	}
+	return entries, strings.Join(parts, "\n")
 }

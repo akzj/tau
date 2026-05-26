@@ -141,3 +141,23 @@ type ErrorEvent struct {
 
 func (ErrorEvent) agentEventMarker()          {}
 func (e ErrorEvent) Timestamp() time.Time { return e.Timestamp_ }
+
+// SteerEvent is injected by the user during a running turn to change direction.
+type SteerEvent struct {
+	Timestamp_ time.Time
+	Message    string // user direction instruction
+	SteerID    string
+}
+
+func (SteerEvent) agentEventMarker()          {}
+func (e SteerEvent) Timestamp() time.Time { return e.Timestamp_ }
+
+// FollowUpEvent is injected by the agent to ask a clarifying question mid-turn.
+type FollowUpEvent struct {
+	Timestamp_ time.Time
+	Question   string
+	FollowUpID string
+}
+
+func (FollowUpEvent) agentEventMarker()          {}
+func (e FollowUpEvent) Timestamp() time.Time { return e.Timestamp_ }
