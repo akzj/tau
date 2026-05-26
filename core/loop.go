@@ -566,6 +566,11 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	r.sess.EventBus.Emit(Event{Type: EvtTurnEnd, Payload: map[string]string{"reason": string(reason)}})
 	Logger().Debug("loop: turn end", "reason", reason)
 
+	// Auto-save session after each turn
+	if r.sess.Store != nil {
+		r.sess.Save()
+	}
+
 	// Increment metrics
 	if c, ok := GetMetrics().counters["tau_turns_total"]; ok {
 		c.Inc()

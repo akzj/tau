@@ -59,6 +59,8 @@ type Session struct {
 	CtxStrategy   ContextStrategy     // context management strategy
 	TotalUsage    TokenUsage          // cumulative token/cost tracking
 	CallCount     int                 // number of LLM calls
+	Store         *SessionStore       // persistent store
+	CreatedAt     time.Time           // session creation time
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
@@ -91,12 +93,21 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		s.CtxStrategy = StrategySliding
 	}
 	s.Conversation = NewConversation(s.MaxTokens, s.CtxStrategy)
+	s.CreatedAt = time.Now()
 	return s, nil
 }
 
 // Cancel cancels the session's context, signalling all work to stop.
 func (s *Session) Cancel() {
 	s.cancel()
+}
+
+// Save persists the session to its store. No-op if Store is nil.
+func (s *Session) Save() error {
+	if s.Store == nil {
+		return nil
+	}
+	return s.Store.Save(s)
 }
 
 // Context returns the session's context.
