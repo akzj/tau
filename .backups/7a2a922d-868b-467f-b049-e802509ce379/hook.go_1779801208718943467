@@ -24,7 +24,6 @@ type HookSet struct {
 	TransformContext      Chain[[]Message]
 	BeforeToolCall        Chain[ToolCallEvent]
 	AfterToolCall         Chain[ToolResultEvent]
-	BeforeCompaction      LastWins[CompactionRequest] // G4 Path A: summarise before compaction
 }
 
 // ToolCallEvent is passed to BeforeToolCall hooks.
@@ -39,7 +38,6 @@ type ToolResultEvent struct {
 	CallID string
 	Result ToolResult
 	Err    error
-}
 
 // CompactionRequest is passed to BeforeCompaction hooks when the transcript
 // exceeds the configured token threshold. The handler produces a summary;
@@ -48,6 +46,7 @@ type CompactionRequest struct {
 	Summary          string   // handler fills this with the summarization result
 	FirstKeptEntryID Position // first message ID to keep after compaction
 	TokensBefore     int      // estimated token count before compaction
+}
 }
 
 // --- Chain implementation ---
