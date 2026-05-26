@@ -178,3 +178,79 @@ func TestBridgeHandleEvent(t *testing.T) {
 		t.Errorf("expected 'turn-42', got %q", received)
 	}
 }
+
+func TestMultiTurnEvents(t *testing.T) {
+	api := NewAPI()
+	vm := goja.New()
+	api.setVM(vm)
+	ctx := NewContext("sess-1")
+
+	var events []string
+	api.On("turn:start", goja.Callable(func(this goja.Value, args ...goja.Value) (goja.Value, error) {
+		events = append(events, "turn:start")
+		return goja.Undefined(), nil
+	}))
+	api.On("turn:end", goja.Callable(func(this goja.Value, args ...goja.Value) (goja.Value, error) {
+		events = append(events, "turn:end")
+		return goja.Undefined(), nil
+	}))
+	api.On("tool:start", goja.Callable(func(this goja.Value, args ...goja.Value) (goja.Value, error) {
+		events = append(events, "tool:start")
+		return goja.Undefined(), nil
+	}))
+
+	// Simulate a multi-turn sequence
+	api.Fire("turn:start", vm.ToValue(map[string]string{"turnID": "1"}), ctx)
+	api.Fire("tool:start", vm.ToValue(map[string]string{"callID": "c1", "toolName": "echo"}), ctx)
+	api.Fire("turn:end", vm.ToValue(map[string]string{"turnID": "1"}), ctx)
+
+	if len(events) != 3 {
+		t.Errorf("expected 3 events, got %d: %v", len(events), events)
+	}
+	if events[0] != "turn:start" {
+		t.Errorf("expected turn:start first, got %s", events[0])
+	}
+	if events[1] != "tool:start" {
+		t.Errorf("expected tool:start second, got %s", events[1])
+	}
+	if events[2] != "turn:end" {
+		t.Errorf("expected turn:end third, got %s", events[2])
+	}
+}
+
+func TestStaleContextFork(t *testing.T) {
+	ctx := NewContext("sess-1")
+	ctx.SetCallbacks(
+		func(text string) {},
+		nil,
+		func() (*ExtensionContext, error) {
+			return NewContext("sess-fork"), nil
+		},
+		nil,
+	)
+
+	// Fork → old context goes stale
+	newCtx, err := ctx.Fork()
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if newCtx.SessionID != "sess-fork" {
+		t.Errorf("expected sess-fork, got %s", newCtx.SessionID)
+	}
+
+	// Old context should be stale after fork
+	if ctx.IsActive() {
+		t.Error("old context should be stale after fork")
+	}
+
+	// Stale context rejects all operations
+	if err := ctx.SendMessage("test"); err == nil {
+		t.Error("expected stale context error from SendMessage")
+	}
+	if _, err := ctx.NewSession(); err == nil {
+		t.Error("expected stale context error from NewSession")
+	}
+	if _, err := ctx.Fork(); err == nil {
+		t.Error("expected stale context error from Fork")
+	}
+}
