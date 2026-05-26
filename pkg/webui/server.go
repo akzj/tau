@@ -48,6 +48,7 @@ func (s *Server) Start() error {
 	http.HandleFunc("/", s.handleIndex)
 	http.HandleFunc("/ws", s.handleWebSocket)
 	http.HandleFunc("/sessions", s.handleSessionList)
+	http.HandleFunc("/api/stream", s.handleStream)
 
 	srv := &http.Server{Addr: s.addr, Handler: nil}
 

@@ -246,6 +246,62 @@ func (s *Server) sendEvent(conn *websocket.Conn, ev core.AgentEvent) {
 	}
 }
 
+// handleStream serves SSE (Server-Sent Events) for real-time agent output.
+// Uses run.Events() (AgentEvent stream) rather than StreamUI, since Prompt
+// always goes through processProviderEvents which does not write to StreamUI.
+func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
+	prompt := r.URL.Query().Get("prompt")
+	if prompt == "" {
+		prompt = "Say hello"
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	sess, err := coding.NewCodingSession(r.Context(), coding.CodingSessionOptions{
+		WorkspaceRoot: s.workspace,
+		SystemPrompt:  systemPrompt(s.workspace),
+		Provider:      s.provider,
+		DefaultModel: core.ModelSpec{
+			Name: s.model,
+			API:  core.WireOpenAICompletions,
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(w, "data: {\"type\":\"error\",\"message\":%q}\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+	defer sess.Cancel()
+
+	loop := core.NewLoop()
+	run, err := loop.Prompt(r.Context(), sess.Session, core.UserInput{Text: prompt})
+	if err != nil {
+		fmt.Fprintf(w, "data: {\"type\":\"error\",\"message\":%q}\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	for ev := range run.Events() {
+		switch e := ev.(type) {
+		case core.MessageDelta:
+			fmt.Fprintf(w, "data: {\"type\":\"delta\",\"content\":%q}\n\n", e.ContentDelta)
+		case core.MessageEnd:
+			fmt.Fprintf(w, "data: {\"type\":\"done\"}\n\n")
+		case core.ErrorEvent:
+			fmt.Fprintf(w, "data: {\"type\":\"error\",\"message\":%q}\n\n", e.Err.Error())
+		}
+		flusher.Flush()
+	}
+}
+
 func (s *Server) sendJSON(conn *websocket.Conn, msg serverMsg) {
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()

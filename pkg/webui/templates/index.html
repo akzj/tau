@@ -369,6 +369,34 @@ document.getElementById('input').addEventListener('input', function() {
   this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 });
 
+/* === SSE Streaming consumer (EventSource) === */
+function trySSE() {
+  const prompt = document.getElementById('input').value.trim();
+  if (!prompt) return;
+  const evtSource = new EventSource('/api/stream?prompt=' + encodeURIComponent(prompt));
+  let sseBubble = null;
+  evtSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    if (data.type === 'delta') {
+      if (!sseBubble) sseBubble = addMsgBubble('assistant', '', 'streaming');
+      sseBubble.querySelector('.msg-bubble').innerHTML = marked ? marked.parse((sseBubble._raw||'') + data.content) : escHtml((sseBubble._raw||'') + data.content);
+      sseBubble._raw = (sseBubble._raw || '') + data.content;
+      smartScroll();
+    } else if (data.type === 'done') {
+      if (sseBubble) { sseBubble.classList.remove('streaming'); sseBubble.querySelector('.streaming-cursor')?.remove(); }
+      evtSource.close();
+      disableSend(false);
+      setStatus('idle');
+    } else if (data.type === 'error') {
+      addMsg('error', data.message);
+      evtSource.close();
+      disableSend(false);
+      setStatus('idle');
+    }
+  };
+  evtSource.onerror = () => { evtSource.close(); disableSend(false); setStatus('idle'); };
+}
+
 connect();
 </script>
 </body></html>
