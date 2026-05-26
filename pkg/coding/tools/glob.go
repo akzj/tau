@@ -23,19 +23,17 @@ func GlobTool() core.Tool {
 		"required": ["pattern"]
 	}`)
 
-	return core.Tool{
-		Name:        "glob",
-		Description: "Find files matching a glob pattern.",
-		Schema:      Schema{Raw: schema},
-		Mode:        core.ModeSequential,
-		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+	tp := &toolThreePhase{
+		prepare: func(ctx context.Context, callID string, params any) (core.PreparedTool, error) {
 			var args struct {
 				Pattern  string `json:"pattern"`
 				WorkDir  string `json:"work_dir"`
 				MaxDepth int    `json:"max_depth"`
 			}
 			raw, _ := json.Marshal(params)
-			json.Unmarshal(raw, &args)
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return core.PreparedTool{}, err
+			}
 			if args.MaxDepth <= 0 {
 				args.MaxDepth = 10
 			}
@@ -45,14 +43,30 @@ func GlobTool() core.Tool {
 				var err error
 				root, err = ResolvePath(args.WorkDir)
 				if err != nil {
-					return core.ToolResult{}, err
+					return core.PreparedTool{}, err
 				}
 			}
+
+			return core.PreparedTool{
+				CallID:   callID,
+				ToolName: "glob",
+				Params:   args,
+				State:    root,
+			}, nil
+		},
+		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			var args struct {
+				Pattern  string
+				WorkDir  string
+				MaxDepth int
+			}
+			raw, _ := json.Marshal(prepared.Params)
+			json.Unmarshal(raw, &args)
+			root := prepared.State.(string)
 
 			var matches []string
 			var skipped []string
 
-			// Walk for ** patterns; fall back to filepath.Glob for simpler patterns
 			if strings.Contains(args.Pattern, "**") {
 				baseDepth := strings.Count(filepath.Clean(root), string(filepath.Separator))
 				filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -64,7 +78,6 @@ func GlobTool() core.Tool {
 						return nil
 					}
 
-					// Check depth
 					depth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - baseDepth
 					if depth > args.MaxDepth {
 						if info.IsDir() {
@@ -73,7 +86,6 @@ func GlobTool() core.Tool {
 						return nil
 					}
 
-					// Skip symlinks
 					if info.Mode()&os.ModeSymlink != 0 {
 						rel, _ := filepath.Rel(root, path)
 						skipped = append(skipped, rel+" (symlink)")
@@ -133,6 +145,21 @@ func GlobTool() core.Tool {
 			return core.ToolResult{
 				Content: []core.Content{{Type: "text", Text: text}},
 			}, nil
+		},
+	}
+
+	return core.Tool{
+		Name:        "glob",
+		Description: "Find files matching a glob pattern.",
+		Schema:      Schema{Raw: schema},
+		Mode:        core.ModeSequential,
+		ThreePhase:  tp,
+		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			prepared, err := tp.Prepare(ctx, callID, params)
+			if err != nil {
+				return core.ToolResult{}, err
+			}
+			return tp.Execute(ctx, prepared, onUpdate)
 		},
 	}
 }

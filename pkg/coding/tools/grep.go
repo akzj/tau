@@ -28,12 +28,8 @@ func GrepTool() core.Tool {
 		"required": ["pattern", "path"]
 	}`)
 
-	return core.Tool{
-		Name:        "grep",
-		Description: "Search for a regex pattern in files.",
-		Schema:      Schema{Raw: schema},
-		Mode:        core.ModeSequential,
-		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+	tp := &toolThreePhase{
+		prepare: func(ctx context.Context, callID string, params any) (core.PreparedTool, error) {
 			var args struct {
 				Pattern      string `json:"pattern"`
 				Path         string `json:"path"`
@@ -43,35 +39,58 @@ func GrepTool() core.Tool {
 				IgnoreCase   bool   `json:"ignore_case"`
 			}
 			raw, _ := json.Marshal(params)
-			json.Unmarshal(raw, &args)
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return core.PreparedTool{}, err
+			}
 			if args.N <= 0 {
 				args.N = 100
 			}
 
+			// Compile regex early to validate
 			pattern := args.Pattern
 			if args.IgnoreCase {
 				pattern = "(?i)" + pattern
 			}
 			re, err := regexp.Compile(pattern)
 			if err != nil {
-				return core.ToolResult{}, fmt.Errorf("grep: invalid regex: %w", err)
+				return core.PreparedTool{}, fmt.Errorf("grep: invalid regex: %w", err)
 			}
 
 			searchPath, err := ResolvePath(args.Path)
 			if err != nil {
-				return core.ToolResult{}, err
+				return core.PreparedTool{}, err
 			}
+
+			return core.PreparedTool{
+				CallID:   callID,
+				ToolName: "grep",
+				Params:   args,
+				State:    grepState{re: re, searchPath: searchPath},
+			}, nil
+		},
+		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			var args struct {
+				Pattern      string
+				Path         string
+				Include      string
+				N            int
+				ContextLines int
+				IgnoreCase   bool
+			}
+			raw, _ := json.Marshal(prepared.Params)
+			json.Unmarshal(raw, &args)
+			state := prepared.State.(grepState)
 
 			var results []string
 			count := 0
 
-			info, err := os.Stat(searchPath)
+			info, err := os.Stat(state.searchPath)
 			if err != nil {
 				return core.ToolResult{}, fmt.Errorf("grep: stat %s: %w", args.Path, err)
 			}
 
 			if info.IsDir() {
-				filepath.Walk(searchPath, func(path string, fi os.FileInfo, err error) error {
+				filepath.Walk(state.searchPath, func(path string, fi os.FileInfo, err error) error {
 					if err != nil || count >= args.N {
 						return nil
 					}
@@ -84,7 +103,7 @@ func GrepTool() core.Tool {
 							return nil
 						}
 					}
-					fileResults, skipped := grepFileEx(path, re, WorkspaceRoot, args.N-count, args.ContextLines)
+					fileResults, skipped := grepFileEx(path, state.re, WorkspaceRoot, args.N-count, args.ContextLines)
 					if skipped {
 						rel, _ := filepath.Rel(WorkspaceRoot, path)
 						results = append(results, fmt.Sprintf("%s: [binary file — skipped]", rel))
@@ -94,9 +113,9 @@ func GrepTool() core.Tool {
 					return nil
 				})
 			} else {
-				fileResults, skipped := grepFileEx(searchPath, re, WorkspaceRoot, args.N, args.ContextLines)
+				fileResults, skipped := grepFileEx(state.searchPath, state.re, WorkspaceRoot, args.N, args.ContextLines)
 				if skipped {
-					rel, _ := filepath.Rel(WorkspaceRoot, searchPath)
+					rel, _ := filepath.Rel(WorkspaceRoot, state.searchPath)
 					results = append(results, fmt.Sprintf("%s: [binary file — skipped]", rel))
 				}
 				results = append(results, fileResults...)
@@ -112,6 +131,27 @@ func GrepTool() core.Tool {
 			}, nil
 		},
 	}
+
+	return core.Tool{
+		Name:        "grep",
+		Description: "Search for a regex pattern in files.",
+		Schema:      Schema{Raw: schema},
+		Mode:        core.ModeSequential,
+		ThreePhase:  tp,
+		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			prepared, err := tp.Prepare(ctx, callID, params)
+			if err != nil {
+				return core.ToolResult{}, err
+			}
+			return tp.Execute(ctx, prepared, onUpdate)
+		},
+	}
+}
+
+// grepState holds pre-compiled regex and resolved path for grep three-phase flow.
+type grepState struct {
+	re         *regexp.Regexp
+	searchPath string
 }
 
 // grepFileEx searches a file with context lines. Returns (results, binarySkipped).
@@ -122,13 +162,11 @@ func grepFileEx(path string, re *regexp.Regexp, root string, maxResults int, ctx
 	}
 	defer f.Close()
 
-	// Read all lines into buffer for context support
 	var allLines []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		text := scanner.Text()
 		if strings.ContainsRune(text, 0) {
-			// Binary file — skip
 			return nil, true
 		}
 		allLines = append(allLines, text)
@@ -137,14 +175,13 @@ func grepFileEx(path string, re *regexp.Regexp, root string, maxResults int, ctx
 	rel, _ := filepath.Rel(root, path)
 
 	var results []string
-	printed := make(map[int]bool) // track which lines we've already printed
+	printed := make(map[int]bool)
 
 	for i, line := range allLines {
 		if len(results) >= maxResults {
 			break
 		}
 		if re.MatchString(line) {
-			// Print separator between non-contiguous match groups
 			start := i - ctxLines
 			if start < 0 {
 				start = 0
