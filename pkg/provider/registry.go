@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -62,6 +63,9 @@ func LoadModelRegistry() (*ModelRegistry, error) {
 func (r *ModelRegistry) Register(info ModelInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, exists := r.models[info.ID]; exists {
+		fmt.Fprintf(os.Stderr, "model registry: duplicate model %q, overwriting\n", info.ID)
+	}
 	r.models[info.ID] = info
 	r.byProv[info.Provider] = append(r.byProv[info.Provider], info.ID)
 }

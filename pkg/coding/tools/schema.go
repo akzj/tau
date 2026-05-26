@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/akzj/tau/core"
 )
@@ -17,9 +18,16 @@ func (s Schema) Marshal() (json.RawMessage, error) {
 	return s.Raw, nil
 }
 
-// Validate passes through raw JSON params as-is.
+// Validate checks JSON validity, then unmarshals into a generic value.
 func (s Schema) Validate(raw json.RawMessage) (any, error) {
-	return raw, nil
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("schema: invalid JSON")
+	}
+	var result any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // Compile-time check: Schema implements core.ToolSchema.

@@ -43,6 +43,7 @@ func NewOpenAICompletionsProvider() (*OpenAICompletionsProvider, error) {
 }
 
 // Stream implements core.Provider.Stream.
+// Stream sends a chat completion request. API key is read from ANTHROPIC_AUTH_TOKEN env var per call.
 func (p *OpenAICompletionsProvider) Stream(ctx context.Context, req core.StreamRequest) (<-chan core.ProviderEvent, error) {
 	body, err := p.buildRequestBody(req, true)
 	if err != nil {
@@ -89,6 +90,7 @@ func (p *OpenAICompletionsProvider) Stream(ctx context.Context, req core.StreamR
 }
 
 // Complete implements core.Provider.Complete.
+// Complete sends a non-streaming completion request. API key is read per call.
 func (p *OpenAICompletionsProvider) Complete(ctx context.Context, req core.CompleteRequest) (core.CompleteResponse, error) {
 	body := map[string]any{
 		"model":    req.Model.Name,

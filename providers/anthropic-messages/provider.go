@@ -41,6 +41,7 @@ func NewAnthropicMessagesProvider() (*AnthropicMessagesProvider, error) {
 }
 
 // Stream implements core.Provider.Stream.
+// Stream sends a Messages API request. API key is read from ANTHROPIC_AUTH_TOKEN env var per call.
 func (p *AnthropicMessagesProvider) Stream(ctx context.Context, req core.StreamRequest) (<-chan core.ProviderEvent, error) {
 	body := p.buildAnthropicBody(req, true)
 
@@ -82,6 +83,7 @@ func (p *AnthropicMessagesProvider) Stream(ctx context.Context, req core.StreamR
 }
 
 // Complete implements core.Provider.Complete.
+// Complete sends a non-streaming Messages request. API key is read per call.
 func (p *AnthropicMessagesProvider) Complete(ctx context.Context, req core.CompleteRequest) (core.CompleteResponse, error) {
 	body := p.buildAnthropicBody(core.StreamRequest{
 		Messages:     req.Messages,

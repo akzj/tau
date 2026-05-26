@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,7 @@ func (l *Loader) Load() ([]Skill, error) {
 	for _, dir := range l.dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "skills: cannot read %s: %v\n", dir, err)
 			continue // skip missing directories
 		}
 		for _, entry := range entries {
@@ -44,9 +46,14 @@ func (l *Loader) Load() ([]Skill, error) {
 			path := filepath.Join(dir, entry.Name())
 			content, err := os.ReadFile(path)
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "skills: cannot read %s: %v\n", path, err)
 				continue
 			}
 			skill := parseSkillFile(string(content), path)
+			if skill.Name == "" {
+				fmt.Fprintf(os.Stderr, "skills: skipping %s (no name)\n", path)
+				continue
+			}
 			seen[skill.Name] = skill
 		}
 	}

@@ -65,7 +65,8 @@ func GlobTool() core.Tool {
 			root := prepared.State.(string)
 
 			var matches []string
-			var skipped []string
+			var permSkipped []string
+			var symSkipped []string
 
 			if strings.Contains(args.Pattern, "**") {
 				baseDepth := strings.Count(filepath.Clean(root), string(filepath.Separator))
@@ -73,7 +74,7 @@ func GlobTool() core.Tool {
 					if err != nil {
 						if os.IsPermission(err) {
 							rel, _ := filepath.Rel(root, path)
-							skipped = append(skipped, rel)
+							permSkipped = append(permSkipped, rel)
 						}
 						return nil
 					}
@@ -88,7 +89,7 @@ func GlobTool() core.Tool {
 
 					if info.Mode()&os.ModeSymlink != 0 {
 						rel, _ := filepath.Rel(root, path)
-						skipped = append(skipped, rel+" (symlink)")
+						symSkipped = append(symSkipped, rel)
 						return nil
 					}
 
@@ -117,7 +118,7 @@ func GlobTool() core.Tool {
 						continue
 					}
 					if info.Mode()&os.ModeSymlink != 0 {
-						skipped = append(skipped, m+" (symlink)")
+						symSkipped = append(symSkipped, m)
 						continue
 					}
 					rel, err := filepath.Rel(WorkspaceRoot, m)
@@ -138,8 +139,11 @@ func GlobTool() core.Tool {
 				text = fmt.Sprintf("(no matches for pattern: %s)", args.Pattern)
 			}
 
-			if len(skipped) > 0 {
-				text += fmt.Sprintf("\n\n[skipped: %s]", strings.Join(skipped, ", "))
+			if len(permSkipped) > 0 {
+				text += fmt.Sprintf("\n\n[skipped (permission): %s]", strings.Join(permSkipped, ", "))
+			}
+			if len(symSkipped) > 0 {
+				text += fmt.Sprintf("\n\n[skipped (symlink): %s]", strings.Join(symSkipped, ", "))
 			}
 
 			return core.ToolResult{

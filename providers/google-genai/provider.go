@@ -45,6 +45,7 @@ func NewProvider() (*Provider, error) {
 }
 
 // Stream implements core.Provider.Stream via SSE streamGenerateContent.
+// Stream sends a generateContent request. API key is read from ANTHROPIC_AUTH_TOKEN env var per call.
 func (p *Provider) Stream(ctx context.Context, req core.StreamRequest) (<-chan core.ProviderEvent, error) {
 	body := p.buildStreamBody(req)
 
@@ -94,6 +95,7 @@ func (p *Provider) Stream(ctx context.Context, req core.StreamRequest) (<-chan c
 }
 
 // Complete implements core.Provider.Complete via non-streaming generateContent.
+// Complete sends a non-streaming generateContent request. API key is read per call.
 func (p *Provider) Complete(ctx context.Context, req core.CompleteRequest) (core.CompleteResponse, error) {
 	body := p.buildCompleteBody(req)
 
