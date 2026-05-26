@@ -14,6 +14,7 @@ import (
 	"github.com/akzj/tau/pkg/coding"
 	"github.com/akzj/tau/pkg/tui"
 	"github.com/akzj/tau/pkg/webui"
+	"github.com/akzj/tau/pkg/persist"
 	"github.com/akzj/tau/providers/anthropic-messages"
 	"github.com/akzj/tau/providers/openai-completions"
 )
@@ -29,6 +30,8 @@ func main() {
 	tuiMode := flag.Bool("tui", false, "Launch Terminal UI")
 	webuiMode := flag.Bool("webui", false, "Launch Web UI")
 	addr := flag.String("addr", ":8080", "Web UI listen address")
+	resumeID := flag.String("resume", "", "Resume a saved session by ID")
+	listSessions := flag.Bool("list-sessions", false, "List saved sessions")
 	flag.Parse()
 
 	// Resolve workspace
@@ -50,10 +53,28 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode && !*webuiMode {
+	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
+	}
+
+	// --list-sessions: print saved sessions and exit
+	if *listSessions {
+		sessions, err := persist.List()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list: %v\n", err)
+			os.Exit(1)
+		}
+		if len(sessions) == 0 {
+			fmt.Println("No saved sessions.")
+			return
+		}
+		fmt.Printf("%-20s %-12s %s\n", "ID", "MSGS", "FIRST MESSAGE")
+		for _, s := range sessions {
+			fmt.Printf("%-20s %-12d %s\n", s.ID, s.MsgCount, s.FirstMsg)
+		}
+		return
 	}
 
 	ctx := context.Background()
@@ -103,6 +124,19 @@ func main() {
 		os.Exit(1)
 	}
 	defer sess.Cancel()
+
+	// Resume: load saved transcript history
+	if *resumeID != "" {
+		msgs, err := persist.Load(*resumeID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "resume: %v\n", err)
+			os.Exit(1)
+		}
+		sess.Session.Transcript.Append(msgs...)
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "[resumed %s] (%d messages)\n", *resumeID, len(msgs))
+		}
+	}
 
 	// Disable tools if requested
 	if *noTools {
@@ -171,6 +205,15 @@ func main() {
 			}
 		}
 		<-run.Done()
+	}
+
+	// Save session on exit
+	sessionID := persist.NewID()
+	msgs := sess.Transcript.Messages()
+	if err := persist.Save(sessionID, msgs); err != nil {
+		fmt.Fprintf(os.Stderr, "save: %v\n", err)
+	} else if *verbose {
+		fmt.Fprintf(os.Stderr, "[saved %s] (%d messages)\n", sessionID, len(msgs))
 	}
 
 	fmt.Println()

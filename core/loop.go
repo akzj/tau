@@ -311,6 +311,9 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 			}
 			pendingToolResults = nil
 
+			// Check compaction after each turn
+			MaybeCompact(r.sess, DefaultCompactionConfig())
+
 		case ProvToolCallStart:
 			if _, ok := toolCallBuf[pe.ToolCallID]; !ok {
 				toolCallBuf[pe.ToolCallID] = &toolCallAccum{name: pe.ToolName}

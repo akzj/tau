@@ -131,3 +131,23 @@ func (t *Transcript) Subscribe(cursor Position) (<-chan Message, func()) {
 	}
 	return ch, cancel
 }
+
+// Compact replaces messages before firstKept with a single system summary message.
+// Used by the compaction system (G4 Path A).
+func (t *Transcript) Compact(summary string, firstKept Position) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if int(firstKept) >= len(t.messages) {
+		return
+	}
+
+	summaryMsg := Message{
+		Role:    RoleSystem,
+		Content: "[Compacted history]\n" + summary,
+	}
+
+	kept := make([]Message, len(t.messages)-int(firstKept))
+	copy(kept, t.messages[int(firstKept):])
+	t.messages = append([]Message{summaryMsg}, kept...)
+}
