@@ -2,12 +2,14 @@ package webui
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/gorilla/websocket"
 	"github.com/akzj/tau/core"
+	"github.com/akzj/tau/pkg/persist"
 )
 
 //go:embed templates/*
@@ -39,6 +41,7 @@ func NewServer(addr, workspace, model string, prov core.Provider) *Server {
 func (s *Server) Start() error {
 	http.HandleFunc("/", s.handleIndex)
 	http.HandleFunc("/ws", s.handleWebSocket)
+	http.HandleFunc("/sessions", s.handleSessionList)
 	fmt.Fprintf(os.Stderr, "tau webui: http://%s\n", s.addr)
 	return http.ListenAndServe(s.addr, nil)
 }
@@ -51,4 +54,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(data)
+}
+
+func (s *Server) handleSessionList(w http.ResponseWriter, r *http.Request) {
+	sessions, err := persist.List()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sessions)
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/coding"
+	"github.com/akzj/tau/pkg/persist"
 )
 
 // wsMsg is a message received from the browser.
@@ -54,6 +55,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	loop := core.NewLoop()
 
+	// Send session ID on connect.
+	sendJSON(conn, serverMsg{Type: "session", Data: persist.NewID()})
+
 	// Read messages from the browser.
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -63,8 +67,59 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		var msg wsMsg
 		json.Unmarshal(raw, &msg)
 
-		if msg.Type == "prompt" && msg.Text != "" {
-			go s.runTurn(ctx, conn, loop, sess, msg.Text)
+		switch msg.Type {
+		case "prompt":
+			if msg.Text != "" {
+				go s.runTurn(ctx, conn, loop, sess, msg.Text)
+			}
+		case "new_session":
+			sess.Cancel()
+			newSess, err := coding.NewCodingSession(ctx, coding.CodingSessionOptions{
+				WorkspaceRoot: s.workspace,
+				SystemPrompt:  systemPrompt(s.workspace),
+				Provider:      s.provider,
+				DefaultModel: core.ModelSpec{
+					Name: s.model,
+					API:  core.WireOpenAICompletions,
+				},
+			})
+			if err != nil {
+				sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
+				break
+			}
+			sess = newSess
+			sendJSON(conn, serverMsg{Type: "session", Data: persist.NewID()})
+		case "resume":
+			msgs, err := persist.Load(msg.Text)
+			if err != nil {
+				sendJSON(conn, serverMsg{Type: "error", Data: fmt.Sprintf("load session: %v", err)})
+				break
+			}
+			// Cancel old session and create new one for clean state.
+			sess.Cancel()
+			newSess, err := coding.NewCodingSession(ctx, coding.CodingSessionOptions{
+				WorkspaceRoot: s.workspace,
+				SystemPrompt:  systemPrompt(s.workspace),
+				Provider:      s.provider,
+				DefaultModel: core.ModelSpec{
+					Name: s.model,
+					API:  core.WireOpenAICompletions,
+				},
+			})
+			if err != nil {
+				sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
+				break
+			}
+			sess = newSess
+			sess.Transcript.Append(msgs...)
+			sendJSON(conn, serverMsg{Type: "session", Data: msg.Text})
+			// Replay messages as system info.
+			for _, m := range msgs {
+				sendJSON(conn, serverMsg{
+					Type: "message_delta",
+					Data: "[" + string(m.Role) + "] " + truncate(m.Content, 100),
+				})
+			}
 		}
 	}
 }
@@ -149,4 +204,11 @@ func (s *Server) sendEvent(conn *websocket.Conn, ev core.AgentEvent) {
 
 func sendJSON(conn *websocket.Conn, msg serverMsg) {
 	conn.WriteJSON(msg)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
