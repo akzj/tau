@@ -402,6 +402,12 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 		case ProvError:
 			r.events <- ErrorEvent{Timestamp_: timeNow(), Err: pe.Err, Code: ErrProvider}
 			r.sess.EventBus.Emit(Event{Type: EvtError, Payload: pe.Err.Error()})
+
+		case ProvThinkingDelta:
+			r.events <- ThinkingDelta{Timestamp_: timeNow(), Content: pe.ContentDelta}
+
+		case ProvThinkingEnd:
+			r.events <- ThinkingEnd{Timestamp_: timeNow()}
 		}
 	}
 

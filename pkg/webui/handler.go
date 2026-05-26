@@ -26,6 +26,7 @@ type serverMsg struct {
 	CallID      string         `json:"call_id,omitempty"`
 	Name        string         `json:"name,omitempty"`
 	Content     string         `json:"content,omitempty"`
+	Thinking    string         `json:"thinking,omitempty"`
 	Details     map[string]any `json:"details,omitempty"`
 	ActiveTools []string       `json:"active_tools,omitempty"`
 }
@@ -201,6 +202,10 @@ func (s *Server) sendEvent(conn *websocket.Conn, ev core.AgentEvent) {
 		sendJSON(conn, serverMsg{Type: "turn_end", Data: e.Reason})
 	case core.ErrorEvent:
 		sendJSON(conn, serverMsg{Type: "error", Data: e.Err.Error()})
+	case core.ThinkingDelta:
+		sendJSON(conn, serverMsg{Type: "thinking_delta", Data: e.Content})
+	case core.ThinkingEnd:
+		sendJSON(conn, serverMsg{Type: "thinking_end"})
 	}
 }
 

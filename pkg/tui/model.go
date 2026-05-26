@@ -5,6 +5,8 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/akzj/tau/core"
@@ -31,6 +33,7 @@ type model struct {
 	loop          core.Loop
 	messages      []line
 	streaming     string
+	thinkingBuf   strings.Builder
 	tools         map[string]toolState
 	input         textinput.Model
 	status        string

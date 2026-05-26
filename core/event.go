@@ -17,6 +17,8 @@ const (
 	ProvToolCallStart ProviderEventType = "tool_call_start"
 	ProvToolCallDelta ProviderEventType = "tool_call_delta"
 	ProvToolCallEnd   ProviderEventType = "tool_call_end"
+	ProvThinkingDelta ProviderEventType = "thinking_delta"
+	ProvThinkingEnd   ProviderEventType = "thinking_end"
 	ProvError         ProviderEventType = "error"
 )
 
@@ -112,6 +114,24 @@ type ToolCallEnd struct {
 
 func (ToolCallEnd) agentEventMarker()          {}
 func (e ToolCallEnd) Timestamp() time.Time { return e.Timestamp_ }
+
+// ThinkingDelta represents a chunk of extended thinking content from the model.
+// Only emitted when the provider supports thinking (Anthropic extended thinking).
+type ThinkingDelta struct {
+	Timestamp_ time.Time
+	Content    string
+}
+
+func (ThinkingDelta) agentEventMarker()          {}
+func (e ThinkingDelta) Timestamp() time.Time { return e.Timestamp_ }
+
+// ThinkingEnd signals the end of a thinking block.
+type ThinkingEnd struct {
+	Timestamp_ time.Time
+}
+
+func (ThinkingEnd) agentEventMarker()          {}
+func (e ThinkingEnd) Timestamp() time.Time { return e.Timestamp_ }
 
 // TurnStart marks the beginning of a new turn in the conversation loop.
 type TurnStart struct {

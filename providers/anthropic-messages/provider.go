@@ -271,10 +271,11 @@ type anthropicData struct {
 		Text string `json:"text"`
 	} `json:"content_block"`
 	Delta struct {
-		Type       string `json:"type"`
-		Text       string `json:"text"`
+		Type        string `json:"type"`
+		Text        string `json:"text"`
+		Thinking    string `json:"thinking"`
 		PartialJSON string `json:"partial_json"`
-		StopReason string `json:"stop_reason"`
+		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
 	Usage struct {
 		InputTokens  int `json:"input_tokens"`
@@ -288,10 +289,11 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 
 	scanner := bufio.NewScanner(body)
 	var (
-		msgID         string
-		currentEvent  string
-		dataLines     []string
-		indexToToolID = make(map[int]string)
+		msgID          string
+		currentEvent   string
+		dataLines      []string
+		indexToToolID  = make(map[int]string)
+		indexToThinking = make(map[int]bool)
 	)
 
 	flush := func() {
@@ -314,6 +316,8 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 
 		case "content_block_start":
 			switch ad.ContentBlock.Type {
+			case "thinking":
+				indexToThinking[ad.Index] = true
 			case "tool_use":
 				toolCallID := ad.ContentBlock.ID
 				indexToToolID[ad.Index] = toolCallID
@@ -328,6 +332,18 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 
 		case "content_block_delta":
 			switch ad.Delta.Type {
+			case "thinking_delta":
+				events <- core.ProviderEvent{
+					Type:         core.ProvThinkingDelta,
+					MessageID:    msgID,
+					ContentDelta: ad.Delta.Thinking,
+				}
+			case "redacted_thinking":
+				events <- core.ProviderEvent{
+					Type:         core.ProvThinkingDelta,
+					MessageID:    msgID,
+					ContentDelta: "[redacted]",
+				}
 			case "text_delta":
 				events <- core.ProviderEvent{
 					Type:         core.ProvContentDelta,
@@ -352,6 +368,14 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 					MessageID:  msgID,
 					ToolCallID: id,
 				}
+			}
+			// Emit ProvThinkingEnd for thinking blocks at this index
+			if indexToThinking[ad.Index] {
+				events <- core.ProviderEvent{
+					Type:      core.ProvThinkingEnd,
+					MessageID: msgID,
+				}
+				delete(indexToThinking, ad.Index)
 			}
 
 		case "message_delta":

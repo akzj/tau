@@ -32,6 +32,7 @@ body { font:14px/1.5 system-ui,sans-serif; background:var(--bg); color:#e0e0e0; 
 .msg.tool .tool-result { display:none; margin-top:6px; padding:6px; background:rgba(0,0,0,.3); border-radius:4px; max-height:200px; overflow-y:auto; white-space:pre-wrap; font-family:monospace; font-size:11px; }
 .msg.tool.open .tool-result { display:block; }
 .msg.system { color:var(--system); font-style:italic; font-size:12px; }
+.msg.thinking { color:#666; font-style:italic; font-size:12px; opacity:0.8; }
 .msg.error { background:var(--error-bg); color:var(--error); }
 .msg.streaming { opacity:0.8; }
 .streaming-cursor { color:var(--assistant); animation:pulse 1s infinite; }
@@ -115,6 +116,21 @@ function handleMsg(e) {
       break;
     case 'turn_end':
       setStatus('idle');
+      break;
+    case 'thinking_delta':
+      // Accumulate thinking content in a hidden buffer; show on thinking_end
+      if (!window._thinkingBuf) window._thinkingBuf = '';
+      window._thinkingBuf += m.data;
+      break;
+    case 'thinking_end':
+      if (window._thinkingBuf) {
+        const div = document.createElement('div');
+        div.className = 'msg thinking';
+        div.textContent = '💭 ' + window._thinkingBuf;
+        document.getElementById('messages').appendChild(div);
+        window._thinkingBuf = '';
+        scrollDown();
+      }
       break;
     case 'error':
       addMsg('error', m.data);

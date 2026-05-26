@@ -125,6 +125,15 @@ func (m *model) handleAgentEvent(ev core.AgentEvent) tea.Cmd {
 
 	case core.ErrorEvent:
 		m.messages = append(m.messages, line{Role: "system", Content: "error: " + e.Err.Error()})
+
+	case core.ThinkingDelta:
+		m.thinkingBuf.WriteString(e.Content)
+
+	case core.ThinkingEnd:
+		if m.thinkingBuf.Len() > 0 {
+			m.messages = append(m.messages, line{Role: "thinking", Content: m.thinkingBuf.String()})
+			m.thinkingBuf.Reset()
+		}
 	}
 
 	// Continue listening for more events.

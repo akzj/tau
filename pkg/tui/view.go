@@ -13,6 +13,7 @@ var (
 	assistantStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#81c784"))
 	toolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#a5d6a7")).Faint(true)
 	systemStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#90a4ae")).Italic(true)
+	thinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Italic(true)
 	errorStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef5350"))
 	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#78909c")).Background(lipgloss.Color("#263238"))
 	streamingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#81c784")).Faint(true)
@@ -96,6 +97,8 @@ func prefixFor(role string) string {
 		return "  🔧"
 	case "system":
 		return "  ⚙"
+	case "thinking":
+		return "  💭"
 	default:
 		return "  ?"
 	}
@@ -111,6 +114,8 @@ func styleFor(role string) lipgloss.Style {
 		return toolStyle
 	case "system":
 		return systemStyle
+	case "thinking":
+		return thinkingStyle
 	default:
 		return lipgloss.NewStyle()
 	}
