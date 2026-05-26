@@ -23,12 +23,8 @@ func ReadTool() core.Tool {
 		"required": ["file_path"]
 	}`)
 
-	return core.Tool{
-		Name:        "read",
-		Description: "Read a file from the workspace.",
-		Schema:      Schema{Raw: schema},
-		Mode:        core.ModeSequential,
-		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+	tp := &toolThreePhase{
+		prepare: func(ctx context.Context, callID string, params any) (core.PreparedTool, error) {
 			var args struct {
 				FilePath string `json:"file_path"`
 				Offset   int    `json:"offset"`
@@ -36,6 +32,30 @@ func ReadTool() core.Tool {
 				MaxBytes int    `json:"max_bytes"`
 			}
 			raw, _ := json.Marshal(params)
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return core.PreparedTool{}, err
+			}
+
+			path, err := ResolvePath(args.FilePath)
+			if err != nil {
+				return core.PreparedTool{}, err
+			}
+			args.FilePath = path // store resolved path
+
+			return core.PreparedTool{
+				CallID:   callID,
+				ToolName: "read",
+				Params:   args,
+			}, nil
+		},
+		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			var args struct {
+				FilePath string
+				Offset   int
+				Limit    int
+				MaxBytes int
+			}
+			raw, _ := json.Marshal(prepared.Params)
 			json.Unmarshal(raw, &args)
 
 			if args.MaxBytes <= 0 || args.MaxBytes > OutputCap {
@@ -46,14 +66,9 @@ func ReadTool() core.Tool {
 				args.MaxBytes = maxLimit
 			}
 
-			path, err := ResolvePath(args.FilePath)
+			data, err := os.ReadFile(args.FilePath)
 			if err != nil {
-				return core.ToolResult{}, err
-			}
-
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return core.ToolResult{}, fmt.Errorf("read %s: file not found (workspace: %s)", args.FilePath, WorkspaceRoot)
+				return core.ToolResult{}, fmt.Errorf("read %s: file not found (workspace: %s)", prepared.Params, WorkspaceRoot)
 			}
 
 			if len(data) > args.MaxBytes {
@@ -61,13 +76,10 @@ func ReadTool() core.Tool {
 			}
 
 			content := string(data)
-
-			// Detect binary via null bytes
 			if strings.ContainsRune(content, 0) {
 				content = "[binary file detected — showing text preview]\n" + content
 			}
 
-			// Apply offset/limit if specified
 			if args.Offset > 0 || args.Limit > 0 {
 				lines := strings.Split(content, "\n")
 				if args.Offset > 0 && args.Offset <= len(lines) {
@@ -86,6 +98,21 @@ func ReadTool() core.Tool {
 			return core.ToolResult{
 				Content: []core.Content{{Type: "text", Text: content}},
 			}, nil
+		},
+	}
+
+	return core.Tool{
+		Name:        "read",
+		Description: "Read a file from the workspace.",
+		Schema:      Schema{Raw: schema},
+		Mode:        core.ModeSequential,
+		ThreePhase:  tp,
+		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			prepared, err := tp.Prepare(ctx, callID, params)
+			if err != nil {
+				return core.ToolResult{}, err
+			}
+			return tp.Execute(ctx, prepared, onUpdate)
 		},
 	}
 }
