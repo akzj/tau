@@ -156,6 +156,22 @@ func NewID() string {
 	return time.Now().Format("20060102-150405")
 }
 
+// Remove deletes a saved session file.
+func Remove(id string) error {
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, id+".jsonl")
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove %s: %w", id, err)
+	}
+	// Also remove CWD file if present.
+	cwdPath := filepath.Join(dir, id+".cwd")
+	os.Remove(cwdPath) // best-effort
+	return nil
+}
+
 // SaveCWD writes the CWD for a session.
 func SaveCWD(id, cwd string) error {
 	dir, err := Dir()

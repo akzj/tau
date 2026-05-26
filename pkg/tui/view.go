@@ -30,6 +30,11 @@ var (
 
 // View implements tea.Model.
 func (m *model) View() string {
+	// Delegate to session browser when active.
+	if m.showBrowser && m.sessionBrowser != nil {
+		return m.sessionBrowser.View()
+	}
+
 	maxMsgH := m.height - 4 // 1 status + 1 input + 2 padding
 	if maxMsgH < 1 {
 		maxMsgH = 1

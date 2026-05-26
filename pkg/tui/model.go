@@ -94,6 +94,8 @@ type model struct {
 	models        []string  // available model IDs for current provider
 	modelIdx      int       // current model index
 	scrollOffset  int       // mouse wheel scroll offset (lines scrolled up)
+	sessionBrowser *sessionBrowser // session browser sub-model (lazy init)
+	showBrowser    bool            // true = session browser active
 }
 
 // turnCompleteMsg signals the turn loop finished.
@@ -132,6 +134,8 @@ func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string) 
 		models:        []string{"gpt-5.4", "gpt-4o", "gpt-4o-mini", "gpt-4", "o1", "o1-mini"},
 		modelIdx:      0,
 		scrollOffset:  0,
+		sessionBrowser: nil,
+		showBrowser:    false,
 	}
 }
 

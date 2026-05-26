@@ -13,6 +13,43 @@ import (
 
 // Update implements tea.Model.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Session browser delegation: when active, route all messages to browser.
+	if m.showBrowser && m.sessionBrowser != nil {
+		// Handle browser-produced commands at the model level.
+		switch msg := msg.(type) {
+		case loadSessionMsg:
+			return m, m.handleLoadSession(msg.id)
+		case closeBrowserMsg:
+			m.showBrowser = false
+			m.sessionBrowser = nil
+			return m, nil
+		case newSessionMsg:
+			m.messages = nil
+			m.streaming = ""
+			m.tools = make(map[string]toolState)
+			m.turnCount = 0
+			m.scrollOffset = 0
+			m.showBrowser = false
+			m.sessionBrowser = nil
+			m.status = "new session"
+			return m, nil
+		case saveSessionMsg:
+			msgs := m.session.Transcript.Messages()
+			if err := persist.Save(msg.id, msgs); err == nil {
+				m.status = fmt.Sprintf("saved %s", msg.id)
+			} else {
+				m.status = fmt.Sprintf("save failed: %v", err)
+			}
+			// Refresh browser list
+			m.sessionBrowser.sessions, _ = persist.List()
+			return m, nil
+		}
+
+		newBrowser, cmd := m.sessionBrowser.Update(msg)
+		m.sessionBrowser = newBrowser.(*sessionBrowser)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -28,12 +65,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+s":
-			id := persist.NewID()
-			msgs := m.session.Transcript.Messages()
-			if err := persist.Save(id, msgs); err == nil {
-				m.messages = append(m.messages, line{Role: "system", Content: fmt.Sprintf("session saved: %s (%d msgs)", id, len(msgs))})
+			// Toggle session browser.
+			if m.showBrowser {
+				m.showBrowser = false
+				m.sessionBrowser = nil
 			} else {
-				m.messages = append(m.messages, line{Role: "system", Content: fmt.Sprintf("save failed: %v", err)})
+				m.sessionBrowser = newSessionBrowser(string(m.session.ID))
+				m.showBrowser = true
 			}
 			return m, nil
 
@@ -312,6 +350,25 @@ func afterLast(s, sep string) string {
 		return ""
 	}
 	return s[idx+len(sep):]
+}
+
+// handleLoadSession loads a session from persist and populates the TUI model.
+func (m *model) handleLoadSession(id string) tea.Cmd {
+	msgs, err := persist.Load(id)
+	if err != nil {
+		m.status = fmt.Sprintf("load failed: %v", err)
+		m.showBrowser = false
+		m.sessionBrowser = nil
+		return nil
+	}
+	m.messages = nil
+	for _, msg := range msgs {
+		m.messages = append(m.messages, line{Role: string(msg.Role), Content: msg.Content})
+	}
+	m.status = "loaded " + id
+	m.showBrowser = false
+	m.sessionBrowser = nil
+	return nil
 }
 
 // truncate shortens s to maxLen characters, appending "…" if needed.
