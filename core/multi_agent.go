@@ -76,6 +76,13 @@ func SpawnSubAgent(spec SubAgentSpec) (<-chan SubAgentResult, error) {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 
+	// Apply Docker sandbox if available
+	dockerSandbox := NewDockerSandbox()
+	if dockerSandbox.IsAvailable() {
+		dockerSandbox.WrapCommand(cmd)
+		Info("sandbox: docker container wrapping sub-agent", "agent", spec.ID)
+	}
+
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
