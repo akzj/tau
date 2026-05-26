@@ -40,6 +40,7 @@ func main() {
 	listSkills := flag.Bool("list-skills", false, "List available skills")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	yesFlag := flag.Bool("yes", false, "Auto-confirm all dangerous tool operations (TAU_YES env also supported)")
+	strategyFlag := flag.String("strategy", "react", "Reasoning strategy: react, plan-execute, cot")
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "Log format: text, json")
 	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
@@ -92,6 +93,7 @@ func main() {
 	_ = *maxTokens
 	_ = *ctxStrategy
 	_ = *yesFlag
+	_ = *strategyFlag
 
 	core.InitLogger(*logLevel, *logFormat)
 
@@ -361,6 +363,7 @@ func main() {
 			Name: *model,
 			API:  api,
 		},
+		Strategy: *strategyFlag,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "session: %v\n", err)

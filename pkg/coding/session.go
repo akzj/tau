@@ -26,6 +26,7 @@ type CodingSessionOptions struct {
 	DefaultModel  core.ModelSpec
 	MaxTokens     int                 // token budget (default 128000)
 	CtxStrategy   core.ContextStrategy // context management strategy
+	Strategy      string              // strategy name (default: react)
 }
 
 // NewCodingSession creates a session with all 7 coding tools registered.
@@ -46,6 +47,10 @@ func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSe
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
+	}
+
+	if opts.Strategy != "" {
+		sess.Strategy = core.GetStrategy(opts.Strategy)
 	}
 
 	cs := &CodingSession{

@@ -64,6 +64,7 @@ type Session struct {
 	CreatedAt     time.Time           // session creation time
 	Memory        *MemorySystem       // 3-layer memory system (nil = disabled)
 	YesMode       bool                // --yes mode (skip all confirmation)
+	Strategy      AgentStrategy       // pluggable reasoning strategy
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
@@ -99,6 +100,9 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	s.CreatedAt = time.Now()
 	if opts.MemoryDir != "" {
 		s.Memory = NewMemorySystem(opts.MemoryDir, opts.MemoryDir)
+	}
+	if s.Strategy == nil {
+		s.Strategy = NewReActStrategy()
 	}
 	return s, nil
 }
