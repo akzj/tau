@@ -29,6 +29,8 @@ type serverMsg struct {
 	Thinking    string         `json:"thinking,omitempty"`
 	Details     map[string]any `json:"details,omitempty"`
 	ActiveTools []string       `json:"active_tools,omitempty"`
+	FilePath    string         `json:"file_path,omitempty"`
+	FileAction  string         `json:"file_action,omitempty"`
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +198,21 @@ func (s *Server) sendEvent(conn *websocket.Conn, ev core.AgentEvent) {
 	case core.MessageEnd:
 		s.sendJSON(conn, serverMsg{Type: "message_end"})
 	case core.ToolCallStart:
-		s.sendJSON(conn, serverMsg{Type: "tool_start", CallID: e.CallID, Name: e.ToolName})
+		msg := serverMsg{Type: "tool_start", CallID: e.CallID, Name: e.ToolName}
+		// Try to extract file path from Args for read/write/edit tools.
+		if e.ToolName == "read" || e.ToolName == "write" || e.ToolName == "edit" || e.ToolName == "glob" || e.ToolName == "grep" {
+			var args map[string]any
+			if json.Unmarshal(e.Args, &args) == nil {
+				if path, ok := args["file_path"].(string); ok {
+					msg.FilePath = path
+					msg.FileAction = e.ToolName
+				} else if path, ok := args["path"].(string); ok {
+					msg.FilePath = path
+					msg.FileAction = e.ToolName
+				}
+			}
+		}
+		s.sendJSON(conn, msg)
 	case core.ToolCallEnd:
 		content := ""
 		for _, c := range e.Result.Content {
@@ -204,7 +220,21 @@ func (s *Server) sendEvent(conn *websocket.Conn, ev core.AgentEvent) {
 				content = c.Text
 			}
 		}
-		s.sendJSON(conn, serverMsg{Type: "tool_end", CallID: e.CallID, Content: content})
+		msg := serverMsg{Type: "tool_end", CallID: e.CallID, Content: content}
+		// Extract file info from Result.Details.
+		if e.Result.Details != nil {
+			if path, ok := e.Result.Details["path"].(string); ok {
+				msg.FilePath = path
+			} else if path, ok := e.Result.Details["file_path"].(string); ok {
+				msg.FilePath = path
+			}
+			if action, ok := e.Result.Details["action"].(string); ok {
+				msg.FileAction = action
+			} else if msg.FilePath != "" {
+				msg.FileAction = "modified"
+			}
+		}
+		s.sendJSON(conn, msg)
 	case core.TurnEnd:
 		s.sendJSON(conn, serverMsg{Type: "turn_end", Data: e.Reason})
 	case core.ErrorEvent:
