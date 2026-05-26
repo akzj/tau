@@ -58,7 +58,10 @@ func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSe
 	cs.Tools.Register(tools.GlobTool())
 	cs.Tools.Register(tools.GrepTool())
 	cs.Tools.Register(tools.TaskTool())
-	cs.Tools.SetActive([]string{"read", "write", "edit", "bash", "glob", "grep", "task"})
+	cs.Tools.Register(tools.WebSearchTool())
+	cs.Tools.Register(tools.WebFetchTool())
+	cs.Tools.Register(tools.TaskTrackerTool())
+	cs.Tools.SetActive([]string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch"})
 
 	// Initialize hooks
 	cs.Hooks.TransformContext = core.NewChain[[]core.Message]()

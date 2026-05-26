@@ -33,6 +33,7 @@ func main() {
 	steerMsg := flag.String("steer", "", "Inject a steer instruction (for use with --resume)")
 	listSessions := flag.Bool("list-sessions", false, "List saved sessions")
 	listModels := flag.Bool("list-models", false, "List available models")
+	listTools := flag.Bool("list-tools", false, "List available tools")
 	flag.Parse()
 
 	// Resolve workspace
@@ -54,10 +55,20 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels {
+	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels && !*listTools {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
+	}
+
+	// --list-tools: print available tools and exit
+	if *listTools {
+		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch"}
+		fmt.Println("Available tools:")
+		for _, t := range toolNames {
+			fmt.Printf("  %s\n", t)
+		}
+		return
 	}
 
 	// --list-sessions: print saved sessions and exit
@@ -128,6 +139,8 @@ func main() {
 	switch modelInfo.Provider {
 	case "anthropic":
 		api = core.WireAnthropicMessages
+	case "azure":
+		api = core.WireOpenAICompletions // Azure uses same wire protocol
 	case "google":
 		api = core.WireGoogleGenerativeAI
 	default:
