@@ -417,7 +417,10 @@ func main() {
 
 	// TUI mode: launch Bubble Tea, skip batch loop.
 	if *tuiMode {
-		tm := tui.NewModel(sess, loop, prompt)
+		// Create streaming bridge channel (bidirectional — Go allows chan → chan<- assignment).
+		streamUI := make(chan core.StreamEvent, 64)
+		sess.Session.StreamUI = streamUI
+		tm := tui.NewModel(sess, loop, prompt, streamUI)
 		p := tea.NewProgram(tm, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "tui: %v\n", err)

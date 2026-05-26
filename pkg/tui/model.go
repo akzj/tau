@@ -7,6 +7,7 @@ package tui
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -96,6 +97,7 @@ type model struct {
 	scrollOffset  int       // mouse wheel scroll offset (lines scrolled up)
 	sessionBrowser *sessionBrowser // session browser sub-model (lazy init)
 	showBrowser    bool            // true = session browser active
+	streamUI       chan core.StreamEvent // streaming UI channel (nil = non-streaming)
 }
 
 // turnCompleteMsg signals the turn loop finished.
@@ -108,7 +110,8 @@ type eventMsg struct {
 
 // NewModel creates a new TUI model.
 // initialPrompt is optional — if non-empty, it will be auto-submitted on start.
-func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string) *model {
+// streamUI is the streaming channel (nil = non-streaming mode).
+func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string, streamUI chan core.StreamEvent) *model {
 	ti := textinput.New()
 	ti.Placeholder = "Type a message..."
 	ti.Focus()
@@ -118,7 +121,7 @@ func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string) 
 		status = "streaming"
 	}
 
-	return &model{
+	m := &model{
 		session:       sess,
 		loop:          loop,
 		messages:      make([]line, 0),
@@ -136,7 +139,15 @@ func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string) 
 		scrollOffset:  0,
 		sessionBrowser: nil,
 		showBrowser:    false,
+		streamUI:       streamUI,
 	}
+
+	// Start streaming consumer if StreamUI channel is provided.
+	if streamUI != nil {
+		go m.bridgeStreamUI()
+	}
+
+	return m
 }
 
 // subscribeEvents wires the model to the session event bus.
@@ -184,6 +195,28 @@ func listenEvents(ch <-chan any) tea.Cmd {
 			return v
 		default:
 			return nil
+		}
+	}
+}
+
+// bridgeStreamUI consumes the StreamUI channel and injects synthetic
+// MessageDelta/MessageEnd events into the agent channel for realtime TUI rendering.
+func (m *model) bridgeStreamUI() {
+	for ev := range m.streamUI {
+		switch ev.Type {
+		case core.StreamDelta:
+			if ev.Content != "" {
+				m.agentChan <- eventMsg{event: core.MessageDelta{
+					Timestamp_:   time.Now(),
+					ContentDelta: ev.Content,
+				}}
+			}
+		case core.StreamDone:
+			m.agentChan <- eventMsg{event: core.MessageEnd{
+				Timestamp_: time.Now(),
+			}}
+		case core.StreamError:
+			m.agentChan <- turnCompleteMsg{err: ev.Err}
 		}
 	}
 }
