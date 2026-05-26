@@ -45,6 +45,9 @@ func main() {
 	configPath := flag.String("config", "", "Config file path (default: ~/.tau/tau.yaml)")
 	pluginDir := flag.String("plugin-dir", "", "Plugin directory (default: $TAU_PLUGIN_DIR or ~/.tau/plugins)")
 	maxSubAgents := flag.Int("max-sub-agents", 4, "Maximum concurrent sub-agents")
+	sandboxFlag := flag.Bool("sandbox", true, "Enable sandbox isolation for sub-agents")
+	sandboxRoot := flag.String("sandbox-root", "", "Sandbox root directory")
+	sandboxNetwork := flag.String("sandbox-network", "none", "Sandbox network: none, loopback, full")
 	flag.Parse()
 
 	// Load config file (flag > env > config > default)
@@ -77,8 +80,11 @@ func main() {
 	if cfg.NoTools {
 		*noTools = true
 	}
-	// maxSubAgents reserved for future SubAgentPool integration
+	// maxSubAgents/sandbox reserved for future SubAgentPool integration
 	_ = *maxSubAgents
+	_ = *sandboxFlag
+	_ = *sandboxRoot
+	_ = *sandboxNetwork
 
 	core.InitLogger(*logLevel, *logFormat)
 

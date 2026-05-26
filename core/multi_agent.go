@@ -14,11 +14,12 @@ import (
 
 // SubAgentSpec defines a sub-agent to spawn.
 type SubAgentSpec struct {
-	ID        string   // unique identifier
-	Prompt    string   // initial prompt
-	Tools     []string // allowed tool names (whitelist)
-	Budget    int      // max turns (default 5)
-	Workspace string   // workspace root (default: /tmp/tau-sub-{id})
+	ID        string       // unique identifier
+	Prompt    string       // initial prompt
+	Tools     []string     // allowed tool names (whitelist)
+	Budget    int          // max turns (default 5)
+	Workspace string       // workspace root (default: /tmp/tau-sub-{id})
+	Sandbox   *SandboxSpec // optional: sandbox isolation (default: enabled)
 }
 
 // SubAgentResult holds the result of a sub-agent execution.
@@ -39,6 +40,18 @@ func SpawnSubAgent(spec SubAgentSpec) (<-chan SubAgentResult, error) {
 	}
 	os.MkdirAll(spec.Workspace, 0755)
 
+	// Setup sandbox
+	sandbox := spec.Sandbox
+	if sandbox == nil {
+		sandbox = DefaultSandbox(spec.ID)
+	}
+	if err := sandbox.Validate(); err != nil {
+		return nil, err
+	}
+	if err := sandbox.Setup(); err != nil {
+		return nil, err
+	}
+
 	tauBin := os.Getenv("TAU_BIN")
 	if tauBin == "" {
 		tauBin = "tau"
@@ -49,6 +62,9 @@ func SpawnSubAgent(spec SubAgentSpec) (<-chan SubAgentResult, error) {
 		"--workspace", spec.Workspace,
 		"--no-tools",
 	)
+	if err := sandbox.WrapCmd(cmd); err != nil {
+		return nil, err
+	}
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()
