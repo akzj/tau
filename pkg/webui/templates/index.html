@@ -58,6 +58,46 @@ body { font:14px/1.5 system-ui,sans-serif; background:var(--bg); color:#e0e0e0; 
 .file-entry { padding:2px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .file-entry .icon { margin-right:4px; }
 .file-entry.read { color:#9e9e9e; } .file-entry.modified { color:#ffeb3b; } .file-entry.created { color:#4caf50; } .file-entry.write { color:#4caf50; } .file-entry.edit { color:#ffeb3b; } .file-entry.glob { color:#9e9e9e; } .file-entry.grep { color:#9e9e9e; }
+
+/* === Responsive Design === */
+
+/* Tablet (≤768px) */
+@media (max-width: 768px) {
+    #file-tree-panel { width: 180px; }
+    #header { flex-wrap: wrap; padding: 6px 10px; }
+    #input { padding: 8px 10px; }
+    .msg { max-width: 92%; }
+}
+
+/* Mobile (≤480px) */
+@media (max-width: 480px) {
+    body { font-size: 13px; }
+    #header { flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px; }
+
+    #file-tree-panel { display: none !important; }
+    #file-tree-panel.visible {
+        display: block !important;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100%;
+        z-index: 100;
+        background: var(--bg);
+        padding: 16px;
+    }
+
+    #input-area { padding: 6px 8px; gap: 6px; }
+    #input { padding: 10px 12px; font-size: 16px; }
+
+    #send { padding: 12px 18px; min-height: 44px; min-width: 60px; }
+    #file-tree-toggle, #session-bar button { min-height: 44px; padding: 8px 12px; }
+
+    .msg { max-width: 95%; padding: 8px 10px; margin-bottom: 8px; }
+
+    #session-bar { overflow-x: auto; max-width: 100%; flex-wrap: wrap; }
+    #session-bar select { max-width: 120px; }
+
+    #status { display: none; }
+}
 </style>
 </head><body>
 
