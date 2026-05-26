@@ -1,14 +1,31 @@
 package provider
 
-import "sync"
+import (
+	"embed"
+	"encoding/json"
+	"fmt"
+	"sync"
+)
+
+//go:embed models.json
+var modelsJSON embed.FS
+
+// ModelCost describes per-token pricing.
+type ModelCost struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
+}
 
 // ModelInfo describes a registered model.
 type ModelInfo struct {
-	ID        string   // "gpt-4o", "claude-sonnet-4-6"
-	Name      string   // "GPT-4o", "Claude Sonnet 4"
-	Provider  string   // "openai", "anthropic"
-	MaxTokens int
-	Features  []string // "streaming", "tools", "vision"
+	ID            string    `json:"id"`            // "gpt-4o", "claude-sonnet-4-6"
+	Name          string    `json:"name"`          // "GPT-4o", "Claude Sonnet 4"
+	Provider      string    `json:"provider"`      // "openai", "anthropic"
+	ContextWindow int       `json:"contextWindow"` // max context tokens
+	MaxTokens     int       `json:"maxTokens"`     // max output tokens
+	InputTypes    []string  `json:"inputTypes"`    // "text", "image", "tool_use"
+	Cost          ModelCost `json:"cost"`          // per-million-token pricing
+	Features      []string  `json:"features,omitempty"`
 }
 
 // ModelRegistry is a thread-safe model catalog.
@@ -18,28 +35,27 @@ type ModelRegistry struct {
 	byProv map[string][]string  // provider → model ids
 }
 
-// NewModelRegistry creates a registry with known models pre-registered.
-func NewModelRegistry() *ModelRegistry {
+// LoadModelRegistry loads models from the embedded models.json.
+func LoadModelRegistry() (*ModelRegistry, error) {
+	data, err := modelsJSON.ReadFile("models.json")
+	if err != nil {
+		return nil, fmt.Errorf("read models.json: %w", err)
+	}
+	var wrapper struct {
+		Models []ModelInfo `json:"models"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, fmt.Errorf("parse models.json: %w", err)
+	}
 	r := &ModelRegistry{
 		models: make(map[string]ModelInfo),
 		byProv: make(map[string][]string),
 	}
-	// OpenAI models
-	r.Register(ModelInfo{ID: "gpt-4o", Name: "GPT-4o", Provider: "openai", MaxTokens: 128000, Features: []string{"streaming", "tools", "vision"}})
-	r.Register(ModelInfo{ID: "gpt-4o-mini", Name: "GPT-4o Mini", Provider: "openai", MaxTokens: 128000, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "gpt-5.4", Name: "GPT-5.4", Provider: "openai", MaxTokens: 128000, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "gpt-4", Name: "GPT-4", Provider: "openai", MaxTokens: 8192, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "o1", Name: "O1", Provider: "openai", MaxTokens: 200000, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "o1-mini", Name: "O1 Mini", Provider: "openai", MaxTokens: 100000, Features: []string{"streaming", "tools"}})
-	// Anthropic models
-	r.Register(ModelInfo{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4", Provider: "anthropic", MaxTokens: 200000, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "claude-haiku-3-5", Name: "Claude Haiku 3.5", Provider: "anthropic", MaxTokens: 200000, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "claude-opus-4", Name: "Claude Opus 4", Provider: "anthropic", MaxTokens: 200000, Features: []string{"streaming", "tools"}})
-	// Google Gemini models
-	r.Register(ModelInfo{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", Provider: "google", MaxTokens: 1000000, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro", Provider: "google", MaxTokens: 2000000, Features: []string{"streaming", "tools"}})
-	r.Register(ModelInfo{ID: "gemini-3.5-flash", Name: "Gemini 3.5 Flash", Provider: "google", MaxTokens: 1000000, Features: []string{"streaming", "tools"}})
-	return r
+	for _, info := range wrapper.Models {
+		info.Features = []string{"streaming", "tools"}
+		r.Register(info)
+	}
+	return r, nil
 }
 
 // Register adds a model to the registry.

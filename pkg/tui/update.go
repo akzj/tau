@@ -3,10 +3,12 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/akzj/tau/core"
 	"github.com/akzj/tau/pkg/persist"
+	"github.com/akzj/tau/pkg/provider"
 )
 
 // Update implements tea.Model.
@@ -33,6 +35,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.messages = append(m.messages, line{Role: "system", Content: fmt.Sprintf("save failed: %v", err)})
 			}
+			return m, nil
+
+		case "ctrl+m":
+			modelReg, _ := provider.LoadModelRegistry()
+			var lines []string
+			for _, info := range modelReg.List("") {
+				lines = append(lines, fmt.Sprintf("%s (%s) %d ctx", info.ID, info.Provider, info.ContextWindow))
+			}
+			m.messages = append(m.messages, line{Role: "system", Content: "Models:\n" + strings.Join(lines, "\n")})
 			return m, nil
 
 		case "enter":

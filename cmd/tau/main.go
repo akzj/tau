@@ -32,6 +32,7 @@ func main() {
 	resumeID := flag.String("resume", "", "Resume a saved session by ID")
 	steerMsg := flag.String("steer", "", "Inject a steer instruction (for use with --resume)")
 	listSessions := flag.Bool("list-sessions", false, "List saved sessions")
+	listModels := flag.Bool("list-models", false, "List available models")
 	flag.Parse()
 
 	// Resolve workspace
@@ -53,7 +54,7 @@ func main() {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
-	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions {
+	if prompt == "" && !*tuiMode && !*webuiMode && !*listSessions && !*listModels {
 		fmt.Fprintf(os.Stderr, "Usage: tau [flags] <prompt>\n")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -77,13 +78,32 @@ func main() {
 		return
 	}
 
+	// --list-models: print model catalog and exit
+	if *listModels {
+		modelReg, err := provider.LoadModelRegistry()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "models: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%-22s %-12s %-8s %-12s %-14s\n", "MODEL", "PROVIDER", "CTX WIN", "COST IN", "COST OUT")
+		for _, info := range modelReg.List("") {
+			fmt.Printf("%-22s %-12s %-8d $%-11.2f $%-13.2f\n",
+				info.ID, info.Provider, info.ContextWindow, info.Cost.Input, info.Cost.Output)
+		}
+		return
+	}
+
 	ctx := context.Background()
 
 	// Initialize provider system (--provider flag preserved for backward compat;
 	// provider is now auto-resolved from --model via the model registry)
 	_ = providerName
 	loader := provider.NewProviderLoader()
-	modelReg := provider.NewModelRegistry()
+	modelReg, err := provider.LoadModelRegistry()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "models: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Lookup model info
 	modelInfo, ok := modelReg.Lookup(*model)
