@@ -51,7 +51,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
+		s.sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
 		return
 	}
 	defer sess.Cancel()
@@ -59,7 +59,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	loop := core.NewLoop()
 
 	// Send session ID on connect.
-	sendJSON(conn, serverMsg{Type: "session", Data: persist.NewID()})
+	s.sendJSON(conn, serverMsg{Type: "session", Data: persist.NewID()})
 
 	// Read messages from the browser.
 	for {
@@ -87,15 +87,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 			if err != nil {
-				sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
+				s.sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
 				break
 			}
 			sess = newSess
-			sendJSON(conn, serverMsg{Type: "session", Data: persist.NewID()})
+			s.sendJSON(conn, serverMsg{Type: "session", Data: persist.NewID()})
 		case "resume":
 			msgs, err := persist.Load(msg.Text)
 			if err != nil {
-				sendJSON(conn, serverMsg{Type: "error", Data: fmt.Sprintf("load session: %v", err)})
+				s.sendJSON(conn, serverMsg{Type: "error", Data: fmt.Sprintf("load session: %v", err)})
 				break
 			}
 			// Cancel old session and create new one for clean state.
@@ -110,15 +110,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 			if err != nil {
-				sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
+				s.sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
 				break
 			}
 			sess = newSess
 			sess.Transcript.Append(msgs...)
-			sendJSON(conn, serverMsg{Type: "session", Data: msg.Text})
+			s.sendJSON(conn, serverMsg{Type: "session", Data: msg.Text})
 			// Replay messages as system info.
 			for _, m := range msgs {
-				sendJSON(conn, serverMsg{
+				s.sendJSON(conn, serverMsg{
 					Type: "message_delta",
 					Data: "[" + string(m.Role) + "] " + truncate(m.Content, 100),
 				})
@@ -139,7 +139,7 @@ func (s *Server) runTurn(ctx context.Context, conn *websocket.Conn, loop core.Lo
 	// First turn: Prompt
 	run, err := loop.Prompt(ctx, sess.Session, core.UserInput{Text: input})
 	if err != nil {
-		sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
+		s.sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
 		return
 	}
 	s.drainRun(ctx, conn, run)
@@ -154,7 +154,7 @@ func (s *Server) runTurn(ctx context.Context, conn *websocket.Conn, loop core.Lo
 		if last.Role == core.RoleTool || (last.Role == core.RoleAssistant && len(last.ToolCalls) > 0) {
 			run, err = loop.Continue(ctx, sess.Session)
 			if err != nil {
-				sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
+				s.sendJSON(conn, serverMsg{Type: "error", Data: err.Error()})
 				return
 			}
 			s.drainRun(ctx, conn, run)
@@ -183,13 +183,13 @@ func (s *Server) drainRun(ctx context.Context, conn *websocket.Conn, run *core.R
 func (s *Server) sendEvent(conn *websocket.Conn, ev core.AgentEvent) {
 	switch e := ev.(type) {
 	case core.MessageStart:
-		sendJSON(conn, serverMsg{Type: "message_start", CallID: e.MessageID})
+		s.sendJSON(conn, serverMsg{Type: "message_start", CallID: e.MessageID})
 	case core.MessageDelta:
-		sendJSON(conn, serverMsg{Type: "message_delta", Data: e.ContentDelta})
+		s.sendJSON(conn, serverMsg{Type: "message_delta", Data: e.ContentDelta})
 	case core.MessageEnd:
-		sendJSON(conn, serverMsg{Type: "message_end"})
+		s.sendJSON(conn, serverMsg{Type: "message_end"})
 	case core.ToolCallStart:
-		sendJSON(conn, serverMsg{Type: "tool_start", CallID: e.CallID, Name: e.ToolName})
+		s.sendJSON(conn, serverMsg{Type: "tool_start", CallID: e.CallID, Name: e.ToolName})
 	case core.ToolCallEnd:
 		content := ""
 		for _, c := range e.Result.Content {
@@ -197,19 +197,21 @@ func (s *Server) sendEvent(conn *websocket.Conn, ev core.AgentEvent) {
 				content = c.Text
 			}
 		}
-		sendJSON(conn, serverMsg{Type: "tool_end", CallID: e.CallID, Content: content})
+		s.sendJSON(conn, serverMsg{Type: "tool_end", CallID: e.CallID, Content: content})
 	case core.TurnEnd:
-		sendJSON(conn, serverMsg{Type: "turn_end", Data: e.Reason})
+		s.sendJSON(conn, serverMsg{Type: "turn_end", Data: e.Reason})
 	case core.ErrorEvent:
-		sendJSON(conn, serverMsg{Type: "error", Data: e.Err.Error()})
+		s.sendJSON(conn, serverMsg{Type: "error", Data: e.Err.Error()})
 	case core.ThinkingDelta:
-		sendJSON(conn, serverMsg{Type: "thinking_delta", Data: e.Content})
+		s.sendJSON(conn, serverMsg{Type: "thinking_delta", Data: e.Content})
 	case core.ThinkingEnd:
-		sendJSON(conn, serverMsg{Type: "thinking_end"})
+		s.sendJSON(conn, serverMsg{Type: "thinking_end"})
 	}
 }
 
-func sendJSON(conn *websocket.Conn, msg serverMsg) {
+func (s *Server) sendJSON(conn *websocket.Conn, msg serverMsg) {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
 	conn.WriteJSON(msg)
 }
 

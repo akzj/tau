@@ -55,6 +55,11 @@ func (l *ProviderLoader) RegisterFactory(id string, factory func() (core.Provide
 // Load returns a cached provider or creates one via factory.
 func (l *ProviderLoader) Load(id string) (core.Provider, error) {
 	l.mu.Lock()
+	// Check cached error first (factory already failed once)
+	if cachedErr, ok := l.errs[id]; ok {
+		l.mu.Unlock()
+		return nil, cachedErr
+	}
 	factory, ok := l.factories[id]
 	if !ok {
 		l.mu.Unlock()
@@ -67,19 +72,27 @@ func (l *ProviderLoader) Load(id string) (core.Provider, error) {
 	var err error
 	once.Do(func() {
 		prov, err = factory()
-		if err == nil {
+		if err != nil {
 			l.mu.Lock()
-			l.cache[id] = prov
+			l.errs[id] = err
 			l.mu.Unlock()
+			return
 		}
+		l.mu.Lock()
+		l.cache[id] = prov
+		l.mu.Unlock()
 	})
 
+	// After once.Do, check for cached error
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if err, ok := l.errs[id]; ok {
+		return nil, err
+	}
 	if p, ok := l.cache[id]; ok {
 		return p, nil
 	}
-	return nil, err
+	return nil, fmt.Errorf("provider %s: factory returned no provider and no error", id)
 }
 
 func (l *ProviderLoader) availableLocked() []string {

@@ -23,6 +23,7 @@ type Server struct {
 	model     string
 	provider  core.Provider
 	upgrader  websocket.Upgrader
+	wsMu      sync.Mutex // protects concurrent WebSocket writes
 }
 
 // NewServer creates a webui server.
