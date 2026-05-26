@@ -262,7 +262,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 			r.events <- MessageEnd{Timestamp_: timeNow(), MessageID: currentMsgID}
 			r.sess.EventBus.Emit(Event{Type: EvtMessageEnd, Payload: currentMsgID})
 
-			// Execute all pending tools in parallel
+			// Execute pending tools — parallel first, then sequential
 			if len(pendingToolCalls) > 0 {
 				type toolResult struct {
 					callID string
@@ -270,59 +270,85 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 					err    error
 				}
 				results := make([]toolResult, len(pendingToolCalls))
-				var wg sync.WaitGroup
 
+				// Split by execution mode
+				type callEntry struct {
+					idx int
+					tc  ToolCallRequest
+				}
+				var parallelCalls, sequentialCalls []callEntry
 				for i, tc := range pendingToolCalls {
+					tool, ok := r.sess.Tools.Get(tc.ToolName)
+					if ok && tool.Mode == ModeSequential {
+						sequentialCalls = append(sequentialCalls, callEntry{i, tc})
+					} else {
+						parallelCalls = append(parallelCalls, callEntry{i, tc})
+					}
+				}
+
+				// Helper: execute a single tool call and store result
+				execTool := func(idx int, tc ToolCallRequest) {
+					if tool, ok := r.sess.Tools.Get(tc.ToolName); ok {
+						// Detect three-phase tool
+						if tp := tool.ThreePhase; tp != nil {
+							raw := json.RawMessage(tc.Args)
+							raw, err := tp.PrepareArgsRaw(raw)
+							if err != nil {
+								results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+								return
+							}
+							prepared, err := tp.Prepare(ctx, tc.CallID, raw)
+							if err != nil {
+								results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+								return
+							}
+							result, err := tp.Execute(ctx, prepared, func(pr PartialResult) {
+								r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
+							})
+							if finalizeErr := tp.Finalize(ctx, prepared, result); finalizeErr != nil {
+								// Log but don't override result error
+							}
+							results[idx] = toolResult{tc.CallID, result, err}
+						} else {
+							// Fallback: single-stage Tool.Execute
+							var params any
+							raw := json.RawMessage(tc.Args)
+							if tool.PrepareArgs != nil {
+								var err error
+								params, err = tool.PrepareArgs(raw)
+								if err != nil {
+									results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+									return
+								}
+							}
+							if params == nil && tc.Args != "" {
+								params = raw
+							}
+							result, err := tool.Execute(ctx, tc.CallID, params, func(pr PartialResult) {
+								r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
+							})
+							results[idx] = toolResult{tc.CallID, result, err}
+						}
+					} else {
+						results[idx] = toolResult{tc.CallID, ToolResult{}, fmt.Errorf("tool not found: %s", tc.ToolName)}
+					}
+				}
+
+				// Execute parallel tools concurrently
+				var wg sync.WaitGroup
+				for _, ce := range parallelCalls {
 					wg.Add(1)
 					go func(idx int, tc ToolCallRequest) {
 						defer wg.Done()
-						if tool, ok := r.sess.Tools.Get(tc.ToolName); ok {
-							// Detect three-phase tool
-							if tp := tool.ThreePhase; tp != nil {
-								raw := json.RawMessage(tc.Args)
-								raw, err := tp.PrepareArgsRaw(raw)
-								if err != nil {
-									results[idx] = toolResult{tc.CallID, ToolResult{}, err}
-									return
-								}
-								prepared, err := tp.Prepare(ctx, tc.CallID, raw)
-								if err != nil {
-									results[idx] = toolResult{tc.CallID, ToolResult{}, err}
-									return
-								}
-								result, err := tp.Execute(ctx, prepared, func(pr PartialResult) {
-									r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
-								})
-								if finalizeErr := tp.Finalize(ctx, prepared, result); finalizeErr != nil {
-									// Log but don't override result error
-								}
-								results[idx] = toolResult{tc.CallID, result, err}
-							} else {
-								// Fallback: single-stage Tool.Execute
-								var params any
-								raw := json.RawMessage(tc.Args)
-								if tool.PrepareArgs != nil {
-									var err error
-									params, err = tool.PrepareArgs(raw)
-									if err != nil {
-										results[idx] = toolResult{tc.CallID, ToolResult{}, err}
-										return
-									}
-								}
-								if params == nil && tc.Args != "" {
-									params = raw
-								}
-								result, err := tool.Execute(ctx, tc.CallID, params, func(pr PartialResult) {
-									r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
-								})
-								results[idx] = toolResult{tc.CallID, result, err}
-							}
-						} else {
-							results[idx] = toolResult{tc.CallID, ToolResult{}, fmt.Errorf("tool not found: %s", tc.ToolName)}
-						}
-					}(i, tc)
+						execTool(idx, tc)
+					}(ce.idx, ce.tc)
 				}
 				wg.Wait()
+
+				// Execute sequential tools one at a time
+				for _, ce := range sequentialCalls {
+					execTool(ce.idx, ce.tc)
+				}
 
 				// Emit results in deterministic order; buffer for transcript
 				for _, tr := range results {
