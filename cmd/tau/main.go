@@ -35,7 +35,11 @@ func main() {
 	listModels := flag.Bool("list-models", false, "List available models")
 	listTools := flag.Bool("list-tools", false, "List available tools")
 	listSkills := flag.Bool("list-skills", false, "List available skills")
+	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
+	logFormat := flag.String("log-format", "text", "Log format: text, json")
 	flag.Parse()
+
+	core.InitLogger(*logLevel, *logFormat)
 
 	// Resolve workspace
 	wsRoot := *workspace

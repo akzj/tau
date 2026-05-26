@@ -175,6 +175,7 @@ cs.Hooks.BeforeToolCall.Add(func(ctx context.Context, ev core.ToolCallEvent) (co
 
 	// Fire session start event
 	sess.EventBus.Emit(core.Event{Type: core.EvtSessionStart, Payload: sess.ID})
+	core.Logger().Info("session: new", "workspace", opts.WorkspaceRoot)
 
 	return cs, nil
 }

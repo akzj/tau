@@ -66,6 +66,8 @@ func MaybeCompact(sess *Session, cfg CompactionConfig) bool {
 		FileOpsHint:      fileOps,
 	}
 
+	Logger().Info("compaction: triggered", "tokensBefore", req.TokensBefore)
+
 	// Run the hook — product-layer handler fills in req.Summary via Provider.Complete()
 	result, err := sess.Hooks.BeforeCompaction.Run(sess.Context(), req)
 	if err != nil || result.Summary == "" {

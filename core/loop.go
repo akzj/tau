@@ -57,6 +57,8 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	l.inTurn = true
 	l.mu.Unlock()
 
+	Logger().Debug("loop: turn start", "input", input.Text[:min(len(input.Text), 80)])
+
 	// 1. Add user message to transcript
 	userMsg := Message{
 		Role:      RoleUser,
@@ -165,6 +167,8 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 	}
 	l.inTurn = true
 	l.mu.Unlock()
+
+	Logger().Debug("loop: continue start")
 
 	// 1. Build system prompt
 	systemPrompt := ""
@@ -519,6 +523,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	r.resultMu.Unlock()
 
 	r.sess.EventBus.Emit(Event{Type: EvtTurnEnd, Payload: map[string]string{"reason": string(reason)}})
+	Logger().Debug("loop: turn end", "reason", reason)
 
 	// Check ShouldStopAfterTurn hook
 	turnInfo := TurnInfo{TurnNumber: 1, Reason: reason}
@@ -586,6 +591,7 @@ func (l *defaultLoop) streamWithRetry(ctx context.Context, p Provider, req Strea
 			if !isTransient(err) {
 				break
 			}
+			Logger().Warn("loop: retry", "attempt", attempt+1, "maxRetries", maxRetries, "err", err.Error()[:min(len(err.Error()), 100)])
 			delay := req.RetryDelay * time.Duration(1<<uint(attempt))
 			if delay <= 0 {
 				delay = time.Second

@@ -64,6 +64,7 @@ func Save(id string, msgs []core.Message) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("rename: %w", err)
 	}
+	core.Logger().Debug("persist: save", "id", id, "msgs", len(msgs))
 	return nil
 }
 
@@ -94,6 +95,7 @@ func Load(id string) ([]core.Message, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
+	core.Logger().Debug("persist: load", "id", id, "msgs", len(msgs))
 	return msgs, nil
 }
 
