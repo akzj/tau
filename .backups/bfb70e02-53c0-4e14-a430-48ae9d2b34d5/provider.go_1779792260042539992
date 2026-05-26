@@ -291,7 +291,6 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 							ToolCallID: toolCallID,
 							ToolName:   tc.Function.Name,
 						}
-						startedToolCalls = append(startedToolCalls, toolCallID)
 					}
 					if tc.Function.Arguments != "" {
 						events <- core.ProviderEvent{
@@ -304,14 +303,8 @@ func (p *OpenAICompletionsProvider) parseSSE(ctx context.Context, body io.ReadCl
 				}
 
 				// Emit tool call end when the choice has finish_reason
-				if choice.FinishReason == "tool_calls" {
-					for _, tcid := range startedToolCalls {
-						events <- core.ProviderEvent{
-							Type:       core.ProvToolCallEnd,
-							MessageID:  msgID,
-							ToolCallID: tcid,
-						}
-					}
+				if choice.FinishReason == "tool_calls" || choice.FinishReason == "stop" {
+					// We'll emit ProvToolCallEnd per tool call at stream end
 				}
 			}
 		}
