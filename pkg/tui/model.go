@@ -75,6 +75,26 @@ func NewModel(sess *coding.CodingSession, loop core.Loop, initialPrompt string) 
 	}
 }
 
+// subscribeEvents wires the model to the session event bus.
+func (m *model) subscribeEvents() {
+	if m.session.Session.EventBus == nil {
+		return
+	}
+	ch, _ := m.session.Session.EventBus.Subscribe()
+	go func() {
+		for evt := range ch {
+			switch evt.Type {
+			case core.EvtTurnStart:
+				m.status = "streaming"
+			case core.EvtTurnEnd:
+				m.status = "idle"
+			case core.EvtError:
+				m.status = "error"
+			}
+		}
+	}()
+}
+
 // Init implements tea.Model.
 func (m *model) Init() tea.Cmd {
 	if m.initialPrompt != "" {

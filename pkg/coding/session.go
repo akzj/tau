@@ -96,6 +96,9 @@ func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSe
 		return ev, nil
 	})
 
+	// Fire session start event
+	sess.EventBus.Emit(core.Event{Type: core.EvtSessionStart, Payload: sess.ID})
+
 	return cs, nil
 }
 

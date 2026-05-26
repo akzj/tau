@@ -222,6 +222,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 	turnID := generateID()
 	r.events <- TurnStart{Timestamp_: timeNow(), TurnID: turnID}
+	r.sess.EventBus.Emit(Event{Type: EvtTurnStart, Payload: turnID})
 
 	// Fire BeforeAgentStart hook
 	if r.sess.Hooks.BeforeAgentStart != nil {
@@ -251,6 +252,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 		case ProvMessageStart:
 			currentMsgID = pe.MessageID
 			r.events <- MessageStart{Timestamp_: timeNow(), MessageID: pe.MessageID, Role: RoleAssistant}
+			r.sess.EventBus.Emit(Event{Type: EvtMessageStart, Payload: pe.MessageID})
 
 		case ProvContentDelta:
 			contentBuf.WriteString(pe.ContentDelta)
@@ -258,6 +260,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 		case ProvMessageEnd:
 			r.events <- MessageEnd{Timestamp_: timeNow(), MessageID: currentMsgID}
+			r.sess.EventBus.Emit(Event{Type: EvtMessageEnd, Payload: currentMsgID})
 
 			// Execute all pending tools in parallel
 			if len(pendingToolCalls) > 0 {
@@ -370,6 +373,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 				ToolName:   pe.ToolName,
 				Args:       nil,
 			}
+			r.sess.EventBus.Emit(Event{Type: EvtToolCallStart, Payload: map[string]string{"callID": pe.ToolCallID, "name": pe.ToolName}})
 
 		case ProvToolCallDelta:
 			if acc, ok := toolCallBuf[pe.ToolCallID]; ok {
@@ -391,6 +395,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 		case ProvError:
 			r.events <- ErrorEvent{Timestamp_: timeNow(), Err: pe.Err, Code: ErrProvider}
+			r.sess.EventBus.Emit(Event{Type: EvtError, Payload: pe.Err.Error()})
 		}
 	}
 
@@ -409,6 +414,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	}
 	r.resultMu.Unlock()
 
+	r.sess.EventBus.Emit(Event{Type: EvtTurnEnd, Payload: map[string]string{"reason": string(reason)}})
 	r.events <- TurnEnd{Timestamp_: timeNow(), TurnID: turnID, Reason: string(reason)}
 }
 

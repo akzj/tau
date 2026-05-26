@@ -47,6 +47,7 @@ type Session struct {
 	SteerQueue    []SteerEntry    // pending steer instructions
 	followUpQueue []FollowUpEntry // pending follow-up questions
 	ActiveTools   []string        // if non-empty, only these tools are sent to LLM
+	EventBus      *EventBus       // event subscription system
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
@@ -63,6 +64,7 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		SystemPrompt: opts.SystemPrompt,
 		Provider:     opts.Provider,
 		DefaultModel: opts.DefaultModel,
+		EventBus:     NewEventBus(),
 		ctx:          sessCtx,
 		cancel:       cancel,
 	}
@@ -148,4 +150,17 @@ func (s *Session) SetTools(names []string) {
 // GetActiveTools returns the current active tool list (nil means all).
 func (s *Session) GetActiveTools() []string {
 	return s.ActiveTools
+}
+
+// On subscribes to a specific event type. Returns a cancel function.
+func (s *Session) On(eventType EventType, handler func(Event)) func() {
+	ch, cancel := s.EventBus.Subscribe()
+	go func() {
+		for evt := range ch {
+			if evt.Type == eventType {
+				handler(evt)
+			}
+		}
+	}()
+	return cancel
 }
