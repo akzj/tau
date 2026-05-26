@@ -131,6 +131,10 @@ func main() {
 
 	ctx := context.Background()
 
+	// Set up graceful shutdown (SIGINT/SIGTERM)
+	shutdown := core.NewShutdown()
+	go core.SignalHandler(shutdown)
+
 	// Initialize provider system (--provider flag preserved for backward compat;
 	// provider is now auto-resolved from --model via the model registry)
 	_ = providerName
@@ -280,6 +284,14 @@ func main() {
 				turnDone = true
 			case <-ctx.Done():
 				turnDone = true
+			case <-shutdown.Ctx().Done():
+				// Graceful shutdown — save and exit
+				sessionID := persist.NewID()
+				if err := persist.Save(sessionID, sess.Transcript.Messages()); err == nil {
+					fmt.Fprintf(os.Stderr, "tau: session saved as %s\n", sessionID)
+				}
+				shutdown.MarkSaved()
+				return
 			}
 		}
 		<-run.Done()
