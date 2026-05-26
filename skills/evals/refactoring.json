@@ -1,0 +1,1 @@
+{"name":"refactoring","description":"Refactoring suggestion","prompt":"Refactor: if err != nil { return err } else { return process() }","expected":["early return","simplify"],"forbidden":["else"],"max_turns":2}

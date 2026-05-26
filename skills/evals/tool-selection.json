@@ -1,0 +1,1 @@
+{"name":"tool-selection","description":"Tool selection test","prompt":"Read the file main.go","expected":["main"],"tools":["read"],"max_turns":1}

@@ -1,0 +1,1 @@
+{"name":"debug","description":"Debug scenario","prompt":"Debug: func div(a,b int) int { return a/b } crashes","expected":["zero","division","check"],"forbidden":["ignore"],"max_turns":2}

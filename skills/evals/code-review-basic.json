@@ -1,0 +1,1 @@
+{"name":"code-review-basic","description":"Basic code review scenario","prompt":"Review this code: func add(a,b int) int { return a+b }","expected":["function","correct"],"forbidden":["bug","vulnerability"],"max_turns":2}

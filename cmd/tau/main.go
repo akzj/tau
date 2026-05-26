@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -132,6 +133,51 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Print(script)
+		return
+	}
+	if flag.NArg() > 0 && flag.Arg(0) == "eval" {
+		args := flag.Args()[1:]
+		suiteDir := "skills/evals"
+		jsonOut := false
+		for _, a := range args {
+			if a == "--json" {
+				jsonOut = true
+			} else if !strings.HasPrefix(a, "-") {
+				suiteDir = a
+			}
+		}
+
+		suite, err := core.LoadSuite(suiteDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "eval: %v\n", err)
+			os.Exit(1)
+		}
+		if len(suite.Scenarios) == 0 {
+			fmt.Println("No scenarios found.")
+			return
+		}
+
+		fmt.Printf("Running %d evaluations...\n\n", len(suite.Scenarios))
+		var results []core.EvalResult
+		for _, s := range suite.Scenarios {
+			r := core.RunEval(s, func(ctx context.Context, prompt string) (<-chan core.ProviderEvent, error) {
+				ch := make(chan core.ProviderEvent, 2)
+				go func() {
+					defer close(ch)
+					ch <- core.ProviderEvent{Type: core.ProvContentDelta, ContentDelta: prompt + " processed"}
+				}()
+				return ch, nil
+			})
+			results = append(results, r)
+		}
+
+		if jsonOut {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(results)
+		} else {
+			fmt.Print(core.EvalReport(results))
+		}
 		return
 	}
 

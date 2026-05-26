@@ -1,0 +1,1 @@
+{"name":"multi-step","description":"Multi-step task","prompt":"Find all Go files and search for TODO comments","expected":["TODO","go"],"tools":["glob","grep"],"max_turns":4}
