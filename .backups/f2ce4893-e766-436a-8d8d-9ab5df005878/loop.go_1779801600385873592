@@ -338,7 +338,40 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 			}
 			pendingToolCalls = append(pendingToolCalls, tcReq)
 
-			// Deferred: tools executed in parallel on ProvMessageEnd
+			// Execute tool if we have it registered
+			if tool, ok := r.sess.Tools.Get(acc.name); ok {
+				var params any
+				raw := json.RawMessage(argsJSON)
+				if tool.PrepareArgs != nil {
+					var err error
+					params, err = tool.PrepareArgs(raw)
+					if err != nil {
+						r.events <- ErrorEvent{Timestamp_: timeNow(), Err: err, Code: ErrTool}
+					}
+				}
+				if params == nil && argsJSON != "" {
+					params = raw
+				}
+				result, err := tool.Execute(ctx, pe.ToolCallID, params, func(pr PartialResult) {
+					r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: pe.ToolCallID, Partial: pr}
+				})
+				if err != nil {
+					r.events <- ErrorEvent{Timestamp_: timeNow(), Err: err, Code: ErrTool}
+				}
+				r.events <- ToolCallEnd{
+					Timestamp_: timeNow(),
+					CallID:     pe.ToolCallID,
+					Result:     result,
+				}
+				// Buffer tool result — flush after assistant message (OpenAI requires ordering)
+				toolMsg := Message{
+					Role:       RoleTool,
+					ToolCallID: pe.ToolCallID,
+					Content:    resultText(result),
+					MessageID:  generateMsgID(),
+				}
+				pendingToolResults = append(pendingToolResults, toolMsg)
+			}
 
 		case ProvError:
 			r.events <- ErrorEvent{Timestamp_: timeNow(), Err: pe.Err, Code: ErrProvider}

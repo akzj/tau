@@ -17,8 +17,7 @@ func ReadTool() core.Tool {
 		"properties": {
 			"file_path": {"type": "string", "description": "Path to file, relative to workspace root"},
 			"offset": {"type": "integer", "description": "Line offset to start reading from (1-based, optional)"},
-			"limit": {"type": "integer", "description": "Max lines to read (optional, default: all)"},
-			"max_bytes": {"type": "integer", "description": "Max bytes to read (default 64KiB, max 1MiB)"}
+			"limit": {"type": "integer", "description": "Max lines to read (optional, default: all)"}
 		},
 		"required": ["file_path"]
 	}`)
@@ -33,18 +32,9 @@ func ReadTool() core.Tool {
 				FilePath string `json:"file_path"`
 				Offset   int    `json:"offset"`
 				Limit    int    `json:"limit"`
-				MaxBytes int    `json:"max_bytes"`
 			}
 			raw, _ := json.Marshal(params)
 			json.Unmarshal(raw, &args)
-
-			if args.MaxBytes <= 0 || args.MaxBytes > OutputCap {
-				args.MaxBytes = OutputCap
-			}
-			const maxLimit = 1024 * 1024 // 1MiB hard cap
-			if args.MaxBytes > maxLimit {
-				args.MaxBytes = maxLimit
-			}
 
 			path, err := ResolvePath(args.FilePath)
 			if err != nil {
@@ -53,20 +43,14 @@ func ReadTool() core.Tool {
 
 			data, err := os.ReadFile(path)
 			if err != nil {
-				return core.ToolResult{}, fmt.Errorf("read %s: file not found (workspace: %s)", args.FilePath, WorkspaceRoot)
+				return core.ToolResult{}, fmt.Errorf("read %s: %w", args.FilePath, err)
 			}
 
-			if len(data) > args.MaxBytes {
-				data = data[:args.MaxBytes]
+			if len(data) > OutputCap {
+				data = data[:OutputCap]
 			}
 
 			content := string(data)
-
-			// Detect binary via null bytes
-			if strings.ContainsRune(content, 0) {
-				content = "[binary file detected — showing text preview]\n" + content
-			}
-
 			// Apply offset/limit if specified
 			if args.Offset > 0 || args.Limit > 0 {
 				lines := strings.Split(content, "\n")
@@ -77,10 +61,6 @@ func ReadTool() core.Tool {
 					lines = lines[:args.Limit]
 				}
 				content = strings.Join(lines, "\n")
-			}
-
-			if content == "" {
-				content = "(empty file)"
 			}
 
 			return core.ToolResult{

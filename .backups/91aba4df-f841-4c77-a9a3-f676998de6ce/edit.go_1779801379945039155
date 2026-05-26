@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/akzj/tau/core"
 )
@@ -50,31 +49,23 @@ func EditTool() core.Tool {
 
 			data, err := os.ReadFile(path)
 			if err != nil {
-				return core.ToolResult{}, fmt.Errorf("edit %s: read: %w", args.FilePath, err)
+				return core.ToolResult{}, fmt.Errorf("read: %w", err)
 			}
 
 			content := string(data)
 			if !strings.Contains(content, args.Old) {
-				preview := content
-				if len(preview) > 100 {
-					preview = preview[:100] + "..."
-				}
-				if preview == "" {
-					preview = "(empty file)"
-				}
-				return core.ToolResult{}, fmt.Errorf("edit %s: old text not found (file preview: %q)", args.FilePath, preview)
+				return core.ToolResult{}, fmt.Errorf("old text not found in %s", args.FilePath)
 			}
 
-			// Backup with timestamp
+			// Backup
 			backupDir := filepath.Join(WorkspaceRoot, ".tau-backups")
 			os.MkdirAll(backupDir, 0755)
-			ts := time.Now().UTC().Format("20060102T150405")
-			backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.%s.bak", filepath.Base(args.FilePath), ts))
+			backupPath := filepath.Join(backupDir, filepath.Base(args.FilePath)+".bak")
 			os.WriteFile(backupPath, data, 0644)
 
 			replaced := strings.Replace(content, args.Old, args.New, args.N)
 			if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
-				return core.ToolResult{}, fmt.Errorf("edit %s: write: %w", args.FilePath, err)
+				return core.ToolResult{}, fmt.Errorf("write: %w", err)
 			}
 
 			count := strings.Count(content, args.Old)

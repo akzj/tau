@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,8 +16,7 @@ func GlobTool() core.Tool {
 		"type": "object",
 		"properties": {
 			"pattern": {"type": "string", "description": "Glob pattern (e.g., **/*.go)"},
-			"work_dir": {"type": "string", "description": "Search directory relative to workspace root (optional)"},
-			"max_depth": {"type": "integer", "description": "Max directory depth for ** patterns (default 10)"}
+			"work_dir": {"type": "string", "description": "Search directory relative to workspace root (optional)"}
 		},
 		"required": ["pattern"]
 	}`)
@@ -30,15 +28,11 @@ func GlobTool() core.Tool {
 		Mode:        core.ModeSequential,
 		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
-				Pattern  string `json:"pattern"`
-				WorkDir  string `json:"work_dir"`
-				MaxDepth int    `json:"max_depth"`
+				Pattern string `json:"pattern"`
+				WorkDir string `json:"work_dir"`
 			}
 			raw, _ := json.Marshal(params)
 			json.Unmarshal(raw, &args)
-			if args.MaxDepth <= 0 {
-				args.MaxDepth = 10
-			}
 
 			root := WorkspaceRoot
 			if args.WorkDir != "" {
@@ -50,36 +44,13 @@ func GlobTool() core.Tool {
 			}
 
 			var matches []string
-			var skipped []string
 
 			// Walk for ** patterns; fall back to filepath.Glob for simpler patterns
 			if strings.Contains(args.Pattern, "**") {
-				baseDepth := strings.Count(filepath.Clean(root), string(filepath.Separator))
 				filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 					if err != nil {
-						if os.IsPermission(err) {
-							rel, _ := filepath.Rel(root, path)
-							skipped = append(skipped, rel)
-						}
 						return nil
 					}
-
-					// Check depth
-					depth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - baseDepth
-					if depth > args.MaxDepth {
-						if info.IsDir() {
-							return filepath.SkipDir
-						}
-						return nil
-					}
-
-					// Skip symlinks
-					if info.Mode()&os.ModeSymlink != 0 {
-						rel, _ := filepath.Rel(root, path)
-						skipped = append(skipped, rel+" (symlink)")
-						return nil
-					}
-
 					rel, err := filepath.Rel(root, path)
 					if err != nil {
 						return nil
@@ -100,14 +71,6 @@ func GlobTool() core.Tool {
 					return core.ToolResult{}, err
 				}
 				for _, m := range found {
-					info, err := os.Lstat(m)
-					if err != nil {
-						continue
-					}
-					if info.Mode()&os.ModeSymlink != 0 {
-						skipped = append(skipped, m+" (symlink)")
-						continue
-					}
 					rel, err := filepath.Rel(WorkspaceRoot, m)
 					if err != nil {
 						matches = append(matches, m)
@@ -123,11 +86,7 @@ func GlobTool() core.Tool {
 
 			text := strings.Join(matches, "\n")
 			if text == "" {
-				text = fmt.Sprintf("(no matches for pattern: %s)", args.Pattern)
-			}
-
-			if len(skipped) > 0 {
-				text += fmt.Sprintf("\n\n[skipped: %s]", strings.Join(skipped, ", "))
+				text = "(no matches)"
 			}
 
 			return core.ToolResult{

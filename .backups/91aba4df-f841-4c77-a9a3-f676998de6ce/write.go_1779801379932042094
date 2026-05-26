@@ -39,30 +39,16 @@ func WriteTool() core.Tool {
 				return core.ToolResult{}, err
 			}
 
-			// Check if file exists for overwrite detection
-			overwritten := false
-			if _, err := os.Stat(path); err == nil {
-				overwritten = true
-			}
-
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				return core.ToolResult{}, fmt.Errorf("write %s: cannot create parent dirs: %w", args.FilePath, err)
+				return core.ToolResult{}, fmt.Errorf("mkdir: %w", err)
 			}
 
 			if err := os.WriteFile(path, []byte(args.Content), 0644); err != nil {
-				return core.ToolResult{}, fmt.Errorf("write %s: %w", args.FilePath, err)
-			}
-
-			msg := fmt.Sprintf("Wrote %d bytes to %s", len(args.Content), args.FilePath)
-			if overwritten {
-				msg += " (overwritten)"
-			}
-			if args.Content == "" {
-				msg += " (empty — file cleared)"
+				return core.ToolResult{}, fmt.Errorf("write: %w", err)
 			}
 
 			return core.ToolResult{
-				Content: []core.Content{{Type: "text", Text: msg}},
+				Content: []core.Content{{Type: "text", Text: fmt.Sprintf("Wrote %d bytes to %s", len(args.Content), args.FilePath)}},
 			}, nil
 		},
 	}

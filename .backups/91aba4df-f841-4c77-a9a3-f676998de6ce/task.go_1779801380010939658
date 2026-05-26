@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/akzj/tau/core"
@@ -44,51 +43,30 @@ func TaskTool() core.Tool {
 				if args.TaskID == "" {
 					args.TaskID = fmt.Sprintf("task-%d", len(tasks)+1)
 				}
-				if _, exists := tasks[args.TaskID]; exists {
-					return core.ToolResult{}, fmt.Errorf("task: duplicate task_id %q — use update instead", args.TaskID)
-				}
 				tasks[args.TaskID] = args.Title
 				return core.ToolResult{
 					Content: []core.Content{{Type: "text", Text: fmt.Sprintf("Created task %s: %s", args.TaskID, args.Title)}},
 				}, nil
 			case "update":
-				if args.TaskID == "" {
-					return core.ToolResult{}, fmt.Errorf("task: task_id is required for update")
-				}
-				if _, exists := tasks[args.TaskID]; !exists {
-					return core.ToolResult{}, fmt.Errorf("task: task_id %q not found — use create instead", args.TaskID)
-				}
 				tasks[args.TaskID] = args.Title
 				return core.ToolResult{
 					Content: []core.Content{{Type: "text", Text: fmt.Sprintf("Updated task %s: %s", args.TaskID, args.Title)}},
 				}, nil
 			case "complete":
-				if args.TaskID == "" {
-					return core.ToolResult{}, fmt.Errorf("task: task_id is required for complete")
-				}
-				if _, exists := tasks[args.TaskID]; !exists {
-					return core.ToolResult{}, fmt.Errorf("task: task_id %q not found", args.TaskID)
-				}
 				delete(tasks, args.TaskID)
 				return core.ToolResult{
 					Content: []core.Content{{Type: "text", Text: fmt.Sprintf("Completed task %s", args.TaskID)}},
 				}, nil
 			default:
-				// List all tasks — sorted, numbered
+				// List all tasks
 				if len(tasks) == 0 {
 					return core.ToolResult{
-						Content: []core.Content{{Type: "text", Text: "No active tasks."}},
+						Content: []core.Content{{Type: "text", Text: "(no tasks)"}},
 					}, nil
 				}
-				// Sort keys for stable output
-				var keys []string
-				for k := range tasks {
-					keys = append(keys, k)
-				}
-				sort.Strings(keys)
 				var lines []string
-				for i, id := range keys {
-					lines = append(lines, fmt.Sprintf("%d. [ ] %s: %s", i+1, id, tasks[id]))
+				for id, title := range tasks {
+					lines = append(lines, fmt.Sprintf("%s: %s", id, title))
 				}
 				return core.ToolResult{
 					Content: []core.Content{{Type: "text", Text: strings.Join(lines, "\n")}},

@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"strings"
-	"syscall"
 	"time"
 
 	"github.com/akzj/tau/core"
@@ -39,10 +37,6 @@ func BashTool() core.Tool {
 			raw, _ := json.Marshal(params)
 			json.Unmarshal(raw, &args)
 
-			if strings.TrimSpace(args.Command) == "" {
-				return core.ToolResult{}, fmt.Errorf("bash: empty command")
-			}
-
 			if args.TimeoutSeconds <= 0 {
 				args.TimeoutSeconds = 30
 			}
@@ -70,44 +64,25 @@ func BashTool() core.Tool {
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
 
-			runErr := cmd.Run()
+			err := cmd.Run()
 			output := stdout.String()
 			if stderr.Len() > 0 {
 				output += "\n[stderr]\n" + stderr.String()
 			}
+			if len(output) > OutputCap {
+				output = output[:OutputCap] + "\n... (truncated)"
+			}
 
-			// Build status trailer
-			var status string
-			if runErr != nil {
+			if err != nil {
 				if cmdCtx.Err() == context.DeadlineExceeded {
-					status = fmt.Sprintf("[timeout after %ds]", args.TimeoutSeconds)
-				} else if exitErr, ok := runErr.(*exec.ExitError); ok {
-					if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-						if ws.Signaled() {
-							status = fmt.Sprintf("[signal: %s]", ws.Signal())
-						} else {
-							status = fmt.Sprintf("[exit: %d]", ws.ExitStatus())
-						}
-					} else {
-						status = fmt.Sprintf("[exit: error — %v]", runErr)
-					}
-				} else {
-					status = fmt.Sprintf("[exit: error — %v]", runErr)
+					return core.ToolResult{
+						Content: []core.Content{{Type: "text", Text: output + "\n[TIMEOUT]"}},
+					}, nil
 				}
-			} else {
-				status = "[exit: 0]"
+				return core.ToolResult{
+					Content: []core.Content{{Type: "text", Text: output + fmt.Sprintf("\n[EXIT: %v]", err)}},
+				}, nil
 			}
-
-			// Cap output, leaving room for status
-			statusOverhead := len(status) + 1 // +1 for newline
-			if len(output)+statusOverhead > OutputCap {
-				cut := OutputCap - statusOverhead - 15 // "... (truncated)"
-				if cut < 0 {
-					cut = 0
-				}
-				output = output[:cut] + "\n... (truncated)"
-			}
-			output += "\n" + status
 
 			return core.ToolResult{
 				Content: []core.Content{{Type: "text", Text: output}},
