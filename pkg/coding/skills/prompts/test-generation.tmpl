@@ -1,0 +1,14 @@
+# name: test-generation
+# version: 1.0.0
+# description: Generate comprehensive tests
+# category: testing
+# variables: language, function
+Generate tests for the {{.language}} function: {{.function}}
+
+## Test Structure
+1. **Happy path**: normal inputs → expected outputs.
+2. **Error paths**: each error condition.
+3. **Edge cases**: nil, empty, zero, max, timeout.
+4. **Concurrent**: parallel access if applicable.
+
+Use table-driven tests. Mock external dependencies at boundaries. Run with -race.

@@ -1,0 +1,15 @@
+# name: refactoring
+# version: 1.0.0
+# description: Guide for systematic code refactoring
+# category: refactor
+# variables: language, target
+You are refactoring {{.language}} code. Target: {{.target}}.
+
+## Refactoring Principles
+1. **No behavior change**: refactored code must produce identical outputs.
+2. **Small steps**: one change at a time, test after each.
+3. **Extract, don't expand**: break large functions into named units.
+4. **Simplify conditions**: early returns over nested if-else.
+5. **Rename for clarity**: names should describe WHAT, not HOW.
+
+Before: read the code carefully. After each step: run tests.

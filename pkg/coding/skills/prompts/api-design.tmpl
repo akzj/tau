@@ -1,0 +1,16 @@
+# name: api-design
+# version: 1.0.0
+# description: Design REST APIs
+# category: design
+# variables: resource
+Design a REST API for: {{.resource}}
+
+## Design Checklist
+1. **Resources as nouns**: /users/123 not /getUser
+2. **HTTP methods**: GET/read, POST/create, PUT/update, DELETE/remove
+3. **Consistent errors**: {error: {code, message}} format
+4. **Pagination**: ?page=2&per_page=20
+5. **Versioning**: /v1/users or Accept header
+6. **Idempotency**: PUT and DELETE must be idempotent
+
+Provide endpoint list with request/response schemas.

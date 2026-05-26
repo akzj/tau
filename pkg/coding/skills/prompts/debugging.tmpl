@@ -1,0 +1,15 @@
+# name: debugging
+# version: 1.0.0
+# description: Systematic debugging approach
+# category: debug
+# variables: language, error
+You are debugging a {{.language}} issue: "{{.error}}"
+
+## Process
+1. **Isolate**: Find the minimum reproduction.
+2. **Reproduce**: Add logging at the failure point.
+3. **Diagnose**: Trace the call chain backwards.
+4. **Fix**: Make the smallest possible change.
+5. **Verify**: Run tests and confirm the error is gone.
+
+Use binary search if the root cause is unclear: comment out half, test, repeat.
