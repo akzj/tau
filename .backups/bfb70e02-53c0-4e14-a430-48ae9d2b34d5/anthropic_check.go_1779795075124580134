@@ -1,0 +1,68 @@
+//go:build ignore
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/akzj/tau/core"
+	anthropic_messages "github.com/akzj/tau/providers/anthropic-messages"
+)
+
+func main() {
+	ctx := context.Background()
+	prov, err := anthropic_messages.NewAnthropicMessagesProvider()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "provider: %v\n", err)
+		os.Exit(1)
+	}
+
+	req := core.StreamRequest{
+		Model: core.ModelSpec{
+			Name: "claude-sonnet-4-20250514",
+			API:  core.WireAnthropicMessages,
+		},
+		Messages: []core.Message{
+			{Role: core.RoleUser, Content: "Say exactly: hello from anthropic"},
+		},
+		Options: core.ProviderOptions{MaxTokens: 100},
+	}
+
+	fmt.Println("=== Anthropic wire test ===")
+	events, err := prov.Stream(ctx, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stream: %v\n", err)
+		os.Exit(1)
+	}
+
+	timeout := time.After(30 * time.Second)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				fmt.Println("\n=== stream ended ===")
+				return
+			}
+			switch ev.Type {
+			case core.ProvMessageStart:
+				fmt.Printf("[start] id=%s\n", ev.MessageID)
+			case core.ProvContentDelta:
+				fmt.Print(ev.ContentDelta)
+			case core.ProvMessageEnd:
+				fmt.Printf("\n[end] id=%s\n", ev.MessageID)
+			case core.ProvError:
+				fmt.Printf("\n[ERROR] %v\n", ev.Err)
+			default:
+				fmt.Printf("[event: %s]\n", ev.Type)
+			}
+		case <-timeout:
+			fmt.Println("\n⏰ timeout")
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
