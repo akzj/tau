@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"time"
 )
 
 // Chain is a multi-handler chain where each handler can transform the value.
@@ -70,14 +69,7 @@ type ToolResultWithError struct {
 	Err    error
 }
 
-// TreeEntry is passed to BeforeSessionTree hooks before insertion into the session tree.
-type TreeEntry struct {
-	ID        string
-	ParentID  string
-	Type      string    // "message", "compaction", "leaf", "branch_summary", "session_info"
-	Timestamp time.Time
-	Data      any // the actual entry data (Message, CompactionRequest, etc.)
-}
+// TreeEntry is defined in tree.go (moved there with EntryType).
 
 // --- Chain implementation ---
 

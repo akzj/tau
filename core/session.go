@@ -29,6 +29,7 @@ type Session struct {
 	SystemPrompt SystemPromptFn
 	Provider     Provider
 	DefaultModel ModelSpec
+	TreeEntries  []TreeEntry // session tree entries
 	ctx          context.Context
 	cancel       context.CancelFunc
 }
@@ -76,4 +77,12 @@ func (s *Session) ResolveProvider() (Provider, error) {
 // generateID creates a simple unique ID (demo quality).
 func generateID() string {
 	return fmt.Sprintf("sess-%d", time.Now().UnixNano())
+}
+
+// AddEntry fires BeforeSessionTree hook and appends the entry to the tree.
+func (s *Session) AddEntry(entry TreeEntry) {
+	if s.Hooks.BeforeSessionTree != nil {
+		s.Hooks.BeforeSessionTree.Run(s.ctx, entry)
+	}
+	s.TreeEntries = append(s.TreeEntries, entry)
 }

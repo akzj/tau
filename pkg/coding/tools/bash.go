@@ -100,6 +100,11 @@ func BashTool() core.Tool {
 				output += "\n[stderr]\n" + stderr.String()
 			}
 
+			// TruncateOutput saves full output to temp file if > TruncateCap
+			if truncated, _ := TruncateOutput(output); truncated != output {
+				output = truncated
+			}
+
 			// Build status trailer
 			var status string
 			if runErr != nil {
