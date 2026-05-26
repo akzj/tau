@@ -62,3 +62,47 @@ func TestPluginWorkspaceDiag(t *testing.T) {
 		t.Logf("plugin diag output (first 500): %s", text[:min(len(text), 500)])
 	}
 }
+
+func TestPluginRunTests(t *testing.T) {
+	ep, err := startPlugin("/tmp/plugin-run-tests")
+	if err != nil {
+		t.Skipf("plugin-run-tests not built: %v", err)
+	}
+	defer ep.cmd.Process.Kill()
+	if ep.Name() != "plugin-run-tests" {
+		t.Errorf("name mismatch: %q", ep.Name())
+	}
+}
+
+func TestPluginSearchCode(t *testing.T) {
+	ep, err := startPlugin("/tmp/plugin-search-code")
+	if err != nil {
+		t.Skipf("plugin-search-code not built: %v", err)
+	}
+	defer ep.cmd.Process.Kill()
+	if ep.Name() != "plugin-search-code" {
+		t.Errorf("name mismatch: %q", ep.Name())
+	}
+}
+
+func TestPluginListFiles(t *testing.T) {
+	ep, err := startPlugin("/tmp/plugin-list-files")
+	if err != nil {
+		t.Skipf("plugin-list-files not built: %v", err)
+	}
+	defer ep.cmd.Process.Kill()
+	if ep.Name() != "plugin-list-files" {
+		t.Errorf("name mismatch: %q", ep.Name())
+	}
+	tools := ep.Tools()
+	if len(tools) == 0 {
+		t.Error("expected at least 1 tool")
+	}
+	result, err := tools[0].Execute(context.Background(), "c1", map[string]any{"depth": 1}, nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(result.Content[0].Text, "[dir]") && !strings.Contains(result.Content[0].Text, "[file]") {
+		t.Logf("output: %s", result.Content[0].Text[:min(len(result.Content[0].Text), 200)])
+	}
+}
