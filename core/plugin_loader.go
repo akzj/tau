@@ -149,7 +149,8 @@ func (ep *ExternalPlugin) rpcCall(method string, params map[string]any) (json.Ra
 		return nil, fmt.Errorf("plugin error: %s", resp.Error)
 	}
 	if method == "tools" {
-		return resp.Tools, nil
+		// Return full response body — caller extracts name/version/tools
+		return json.RawMessage(ep.stdout.Bytes()), nil
 	}
 	return resp.Result, nil
 }
