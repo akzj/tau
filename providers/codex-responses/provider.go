@@ -77,7 +77,17 @@ func (p *Provider) Stream(ctx context.Context, req core.StreamRequest) (<-chan c
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		b := string(bodyBytes)
+		if resp.StatusCode == 429 {
+			return nil, fmt.Errorf("rate limited (429): %s", b)
+		}
+		if resp.StatusCode >= 500 {
+			return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, b)
+		}
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			return nil, fmt.Errorf("auth error (%d): %s", resp.StatusCode, b)
+		}
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, b)
 	}
 
 	events := make(chan core.ProviderEvent, 64)
@@ -106,6 +116,21 @@ func (p *Provider) Complete(ctx context.Context, req core.CompleteRequest) (core
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
 		return core.CompleteResponse{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		b := string(bodyBytes)
+		if resp.StatusCode == 429 {
+			return core.CompleteResponse{}, fmt.Errorf("rate limited (429): %s", b)
+		}
+		if resp.StatusCode >= 500 {
+			return core.CompleteResponse{}, fmt.Errorf("server error (%d): %s", resp.StatusCode, b)
+		}
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			return core.CompleteResponse{}, fmt.Errorf("auth error (%d): %s", resp.StatusCode, b)
+		}
+		return core.CompleteResponse{}, fmt.Errorf("API error %d: %s", resp.StatusCode, b)
 	}
 	defer resp.Body.Close()
 
