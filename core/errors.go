@@ -9,8 +9,9 @@ const (
 	ErrProvider  ErrorCode = "PROVIDER_ERROR"
 	ErrTool      ErrorCode = "TOOL_ERROR"
 	ErrSession   ErrorCode = "SESSION_ERROR"
-	ErrTimeout   ErrorCode = "TIMEOUT"
-	ErrCancelled ErrorCode = "CANCELLED"
+	ErrTimeout       ErrorCode = "TIMEOUT"
+	ErrCancelled     ErrorCode = "CANCELLED"
+	ErrTurnInProgress ErrorCode = "TURN_IN_PROGRESS"
 )
 
 // TauError is the canonical error type for the tau framework.

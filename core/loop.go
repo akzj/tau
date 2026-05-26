@@ -37,7 +37,10 @@ type Loop interface {
 	Continue(ctx context.Context, sess *Session) (*Run, error)
 }
 
-type defaultLoop struct{}
+type defaultLoop struct {
+	mu     sync.Mutex
+	inTurn bool
+}
 
 // NewLoop creates a new Loop.
 func NewLoop() Loop {
@@ -46,6 +49,14 @@ func NewLoop() Loop {
 
 // Prompt starts a new turn.
 func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput) (*Run, error) {
+	l.mu.Lock()
+	if l.inTurn {
+		l.mu.Unlock()
+		return nil, &TauError{Code: ErrTurnInProgress, Message: "a turn is already in progress"}
+	}
+	l.inTurn = true
+	l.mu.Unlock()
+
 	// 1. Add user message to transcript
 	userMsg := Message{
 		Role:      RoleUser,
@@ -126,6 +137,14 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 // Continue resumes a session after tool calls complete, sending results back to the LLM.
 // It does NOT add a user message — the transcript already contains assistant tool_calls + tool results.
 func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error) {
+	l.mu.Lock()
+	if l.inTurn {
+		l.mu.Unlock()
+		return nil, &TauError{Code: ErrTurnInProgress, Message: "a turn is already in progress"}
+	}
+	l.inTurn = true
+	l.mu.Unlock()
+
 	// 1. Build system prompt
 	systemPrompt := ""
 	if sess.SystemPrompt != nil {
@@ -219,6 +238,14 @@ func (r *Run) Cancel() {
 func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan ProviderEvent, req StreamRequest) {
 	defer r.doneOnce.Do(func() { close(r.done) })
 	defer close(r.events)
+	defer func() {
+		// Release turn guard
+		if dl, ok := r.loop.(*defaultLoop); ok {
+			dl.mu.Lock()
+			dl.inTurn = false
+			dl.mu.Unlock()
+		}
+	}()
 
 	turnID := generateID()
 	r.events <- TurnStart{Timestamp_: timeNow(), TurnID: turnID}
