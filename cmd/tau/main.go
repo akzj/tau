@@ -41,6 +41,7 @@ func main() {
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	yesFlag := flag.Bool("yes", false, "Auto-confirm all dangerous tool operations (TAU_YES env also supported)")
 	strategyFlag := flag.String("strategy", "react", "Reasoning strategy: react, plan-execute, cot")
+	rateLimit := flag.Int("rate-limit", 0, "Provider rate limit (requests/sec, 0=unlimited)")
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "Log format: text, json")
 	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
@@ -94,6 +95,9 @@ func main() {
 	_ = *ctxStrategy
 	_ = *yesFlag
 	_ = *strategyFlag
+	if *rateLimit > 0 {
+		core.SetGlobalRateLimit(*rateLimit)
+	}
 
 	core.InitLogger(*logLevel, *logFormat)
 

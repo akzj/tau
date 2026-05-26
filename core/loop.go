@@ -172,6 +172,10 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
+	// Rate limiting: wait for token before API call
+	if err := GlobalRateLimiters.Get(string(req.Model.API)).Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limit wait: %w", err)
+	}
 	result, err := Retry(ctx, DefaultRetryConfig(), func(ctx context.Context) (streamResult, error) {
 		ch, err := p.Stream(ctx, req)
 		if err != nil {
@@ -280,6 +284,10 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
+	// Rate limiting: wait for token before API call
+	if err := GlobalRateLimiters.Get(string(req.Model.API)).Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limit wait: %w", err)
+	}
 	result, err := Retry(ctx, DefaultRetryConfig(), func(ctx context.Context) (streamResult, error) {
 		ch, err := p.Stream(ctx, req)
 		if err != nil {
