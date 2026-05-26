@@ -71,6 +71,7 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		MessageID: generateMsgID(),
 	}
 	sess.Transcript.Append(userMsg)
+	sess.Conversation.Add(userMsg)
 
 	// Consume steer queue — inject as system message before this turn
 	if _, steerText := sess.DrainSteers(); steerText != "" {
@@ -128,9 +129,12 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		})
 	}
 
+	// Sync and fit conversation window
+	sess.Conversation.FitToWindow()
+
 	req := StreamRequest{
 		Model:        sess.DefaultModel,
-		Messages:     sess.Transcript.Messages(),
+		Messages:     sess.Conversation.ToMessages(),
 		Tools:        toolSpecs,
 		SystemPrompt: systemPrompt,
 	}
@@ -212,9 +216,12 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 
 	// 3. Build stream request from current transcript (already has tool results)
 	// TODO: hardcoded model — demo only uses one provider
+	// Sync and fit conversation window
+	sess.Conversation.FitToWindow()
+
 	req := StreamRequest{
 		Model:        sess.DefaultModel,
-		Messages:     sess.Transcript.Messages(),
+		Messages:     sess.Conversation.ToMessages(),
 		Tools:        toolSpecs,
 		SystemPrompt: systemPrompt,
 	}
@@ -482,9 +489,11 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 				ToolCalls: pendingToolCalls,
 			}
 			r.sess.Transcript.Append(assistantMsg)
+			r.sess.Conversation.Add(assistantMsg)
 			// THEN append tool results
 			for _, tr := range pendingToolResults {
 				r.sess.Transcript.Append(tr)
+				r.sess.Conversation.Add(tr)
 			}
 			pendingToolResults = nil
 

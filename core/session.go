@@ -17,8 +17,10 @@ type SystemPromptFn func(sess *Session) (string, error)
 // SessionOptions configures a new Session.
 type SessionOptions struct {
 	SystemPrompt SystemPromptFn
-	Provider     Provider  // direct provider reference for demo simplicity
-	DefaultModel ModelSpec // default model for Loop turns
+	Provider     Provider        // direct provider reference for demo simplicity
+	DefaultModel ModelSpec       // default model for Loop turns
+	MaxTokens    int             // token budget (default 128000)
+	CtxStrategy  ContextStrategy // context management strategy (default "sliding")
 }
 
 // SteerEntry is a pending steer instruction.
@@ -51,7 +53,10 @@ type Session struct {
 	EventBus      *EventBus       // event subscription system
 	Summary       string          // carries compaction summary between turns
 	CWD           string          // working directory at session creation
-	PendingWrites map[string]string // path → confirmed content (latest write/edit)
+	PendingWrites map[string]string   // path → confirmed content (latest write/edit)
+	Conversation  *Conversation       // bounded conversation with token budget
+	MaxTokens     int                 // token budget (default 128000)
+	CtxStrategy   ContextStrategy     // context management strategy
 	ctx           context.Context
 	cancel        context.CancelFunc
 }
@@ -69,11 +74,21 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		SystemPrompt: opts.SystemPrompt,
 		Provider:     opts.Provider,
 		DefaultModel: opts.DefaultModel,
-		EventBus:     NewEventBus(),
-		CWD:          cwd,
-		ctx:          sessCtx,
-		cancel:       cancel,
+		EventBus:      NewEventBus(),
+		CWD:           cwd,
+		PendingWrites: make(map[string]string),
+		MaxTokens:     opts.MaxTokens,
+		CtxStrategy:   opts.CtxStrategy,
+		ctx:           sessCtx,
+		cancel:        cancel,
 	}
+	if s.MaxTokens <= 0 {
+		s.MaxTokens = 128000
+	}
+	if s.CtxStrategy == "" {
+		s.CtxStrategy = StrategySliding
+	}
+	s.Conversation = NewConversation(s.MaxTokens, s.CtxStrategy)
 	return s, nil
 }
 

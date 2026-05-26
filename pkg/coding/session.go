@@ -25,6 +25,8 @@ type CodingSessionOptions struct {
 	SystemPrompt  core.SystemPromptFn
 	Provider      core.Provider
 	DefaultModel  core.ModelSpec
+	MaxTokens     int                 // token budget (default 128000)
+	CtxStrategy   core.ContextStrategy // context management strategy
 }
 
 // NewCodingSession creates a session with all 7 coding tools registered.
@@ -40,6 +42,8 @@ func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSe
 		Provider:     opts.Provider,
 		DefaultModel: opts.DefaultModel,
 		SystemPrompt: opts.SystemPrompt,
+		MaxTokens:    opts.MaxTokens,
+		CtxStrategy:  opts.CtxStrategy,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)

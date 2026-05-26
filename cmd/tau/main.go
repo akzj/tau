@@ -48,6 +48,8 @@ func main() {
 	sandboxFlag := flag.Bool("sandbox", true, "Enable sandbox isolation for sub-agents")
 	sandboxRoot := flag.String("sandbox-root", "", "Sandbox root directory")
 	sandboxNetwork := flag.String("sandbox-network", "none", "Sandbox network: none, loopback, full")
+	maxTokens := flag.Int("max-tokens", 128000, "Maximum token budget for context window")
+	ctxStrategy := flag.String("ctx-strategy", "sliding", "Context strategy: sliding, truncate, summarize")
 	flag.Parse()
 
 	// Load config file (flag > env > config > default)
@@ -80,11 +82,13 @@ func main() {
 	if cfg.NoTools {
 		*noTools = true
 	}
-	// maxSubAgents/sandbox reserved for future SubAgentPool integration
+	// maxSubAgents/sandbox/context reserved for future integration
 	_ = *maxSubAgents
 	_ = *sandboxFlag
 	_ = *sandboxRoot
 	_ = *sandboxNetwork
+	_ = *maxTokens
+	_ = *ctxStrategy
 
 	core.InitLogger(*logLevel, *logFormat)
 
