@@ -134,41 +134,11 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
-	var provEvents <-chan ProviderEvent
-	var lastErr error
-	maxRetries := req.MaxRetries
-	if maxRetries < 0 {
-		maxRetries = 0
-	}
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		provEvents, lastErr = p.Stream(ctx, req)
-		if lastErr == nil {
-			break
-		}
-		if attempt < maxRetries {
-			errStr := lastErr.Error()
-			if !strings.Contains(errStr, "429") && !strings.Contains(errStr, "503") &&
-				!strings.Contains(errStr, "timeout") && !strings.Contains(errStr, "connection") {
-				break
-			}
-			delay := req.RetryDelay * time.Duration(1<<uint(attempt))
-			if delay <= 0 {
-				delay = time.Second
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-	}
-	if provEvents == nil {
-		return nil, fmt.Errorf("provider stream (after %d retries): %w", maxRetries, lastErr)
+	provEvents, err := l.streamWithRetry(ctx, p, req)
+	if err != nil {
+		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
-	if err != nil {
-		return nil, fmt.Errorf("provider stream: %w", err)
-	}
 
 	// 5. Build Run
 	run := &Run{
@@ -235,41 +205,11 @@ func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error)
 		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderRequest, Payload: req.Model.Name})
-	var provEvents <-chan ProviderEvent
-	var lastErr error
-	maxRetries := req.MaxRetries
-	if maxRetries < 0 {
-		maxRetries = 0
-	}
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		provEvents, lastErr = p.Stream(ctx, req)
-		if lastErr == nil {
-			break
-		}
-		if attempt < maxRetries {
-			errStr := lastErr.Error()
-			if !strings.Contains(errStr, "429") && !strings.Contains(errStr, "503") &&
-				!strings.Contains(errStr, "timeout") && !strings.Contains(errStr, "connection") {
-				break
-			}
-			delay := req.RetryDelay * time.Duration(1<<uint(attempt))
-			if delay <= 0 {
-				delay = time.Second
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-	}
-	if provEvents == nil {
-		return nil, fmt.Errorf("provider stream (after %d retries): %w", maxRetries, lastErr)
+	provEvents, err := l.streamWithRetry(ctx, p, req)
+	if err != nil {
+		return nil, err
 	}
 	sess.EventBus.Emit(Event{Type: EvtProviderResponse})
-	if err != nil {
-		return nil, fmt.Errorf("provider stream: %w", err)
-	}
 
 	// 5. Build Run
 	run := &Run{
@@ -623,4 +563,39 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func isTransient(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "429") || strings.Contains(s, "503") || strings.Contains(s, "timeout") || strings.Contains(s, "connection")
+}
+
+func (l *defaultLoop) streamWithRetry(ctx context.Context, p Provider, req StreamRequest) (<-chan ProviderEvent, error) {
+	maxRetries := req.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		provEvents, err := p.Stream(ctx, req)
+		if err == nil {
+			return provEvents, nil
+		}
+		lastErr = err
+		if attempt < maxRetries {
+			if !isTransient(err) {
+				break
+			}
+			delay := req.RetryDelay * time.Duration(1<<uint(attempt))
+			if delay <= 0 {
+				delay = time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+	return nil, fmt.Errorf("provider stream (after %d retries): %w", maxRetries, lastErr)
 }

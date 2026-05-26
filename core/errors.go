@@ -12,6 +12,10 @@ const (
 	ErrTimeout       ErrorCode = "TIMEOUT"
 	ErrCancelled     ErrorCode = "CANCELLED"
 	ErrTurnInProgress ErrorCode = "TURN_IN_PROGRESS"
+	ErrConfig        ErrorCode = "CONFIG_ERROR"
+	ErrValidation    ErrorCode = "VALIDATION_ERROR"
+	ErrPermission    ErrorCode = "PERMISSION_ERROR"
+	ErrNotFound      ErrorCode = "NOT_FOUND"
 )
 
 // TauError is the canonical error type for the tau framework.
