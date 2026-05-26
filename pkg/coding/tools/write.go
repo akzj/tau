@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/akzj/tau/core"
 )
@@ -37,7 +38,10 @@ func WriteTool() core.Tool {
 				return core.PreparedTool{}, err
 			}
 			args.FilePath = path
-
+// Block writes to git internals
+			if strings.Contains(args.FilePath, ".git/index") || strings.Contains(args.FilePath, ".git/HEAD") || strings.Contains(args.FilePath, ".git/config") {
+				return core.PreparedTool{}, fmt.Errorf("BLOCKED: cannot write to %s — git internal files are protected", args.FilePath)
+			}
 			return core.PreparedTool{
 				CallID:   callID,
 				ToolName: "write",
