@@ -142,6 +142,7 @@ func (b *bashThreePhase) Execute(ctx context.Context, prepared core.PreparedTool
 
 	return core.ToolResult{
 		Content: []core.Content{{Type: "text", Text: output}},
+		Details: map[string]any{"exit_code": status, "stdout_len": stdout.Len(), "stderr_len": stderr.Len()},
 	}, nil
 }
 

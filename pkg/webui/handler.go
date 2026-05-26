@@ -21,11 +21,12 @@ type wsMsg struct {
 
 // serverMsg is a message sent to the browser.
 type serverMsg struct {
-	Type    string `json:"type"`
-	Data    string `json:"data,omitempty"`
-	CallID  string `json:"call_id,omitempty"`
-	Name    string `json:"name,omitempty"`
-	Content string `json:"content,omitempty"`
+	Type    string         `json:"type"`
+	Data    string         `json:"data,omitempty"`
+	CallID  string         `json:"call_id,omitempty"`
+	Name    string         `json:"name,omitempty"`
+	Content string         `json:"content,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {

@@ -30,7 +30,7 @@ type PartialResult struct {
 // ToolResult is the canonical tool output.
 type ToolResult struct {
 	Content   []Content
-	Details   any
+	Details   map[string]any `json:"details,omitempty"` // structured data for UI
 	Terminate bool // hint: all tools in batch must set true for actual stop
 }
 

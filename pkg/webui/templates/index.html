@@ -104,8 +104,11 @@ function handleMsg(e) {
     case 'tool_end':
       if (toolMsgs[m.call_id]) {
         const el = toolMsgs[m.call_id];
-        const content = m.content || 'done';
-        el.querySelector('.tool-result').textContent = content.length > 2000 ? content.slice(0,2000)+'...' : content;
+        var text = m.content || 'done';
+        if (m.details) {
+          text += '\n---\n' + JSON.stringify(m.details, null, 2);
+        }
+        el.querySelector('.tool-result').textContent = text.length > 2000 ? text.slice(0,2000)+'...' : text;
         el.querySelector('.tool-header').innerHTML = `<span class="arrow">▶</span> 🔧 ${m.name} ✓`;
         el.classList.add('open');
       }

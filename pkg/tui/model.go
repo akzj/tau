@@ -15,6 +15,7 @@ import (
 type line struct {
 	Role    string // "user", "assistant", "tool", "system"
 	Content string
+	Details map[string]any // structured tool result details
 }
 
 // toolState tracks an in-flight tool call.
