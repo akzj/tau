@@ -1,0 +1,20 @@
+version: "3.8"
+services:
+  tau:
+    build: .
+    image: tau:latest
+    stdin_open: true
+    tty: true
+    ports:
+      - "8080:8080"
+    environment:
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+      - TAU_LOG_LEVEL=info
+      - TAU_LOG_FORMAT=text
+    volumes:
+      - ./workspace:/workspace
+      - tau_sessions:/tau/.tau
+    command: --workspace /workspace --webui --addr :8080 --health-addr :8081
+
+volumes:
+  tau_sessions:

@@ -1,0 +1,14 @@
+.git/
+.backups/
+*.test
+testdata/
+workspace/
+*.md
+!README.md
+!CONTRIBUTING.md
+!AGENTS.md
+demo/
+docs/
+.env
+.idea/
+.vscode/

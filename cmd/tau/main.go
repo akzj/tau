@@ -39,7 +39,39 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "Log format: text, json")
 	healthAddr := flag.String("health-addr", "", "Health check listen address (e.g., :8081)")
+	configPath := flag.String("config", "", "Config file path (default: ~/.tau/tau.yaml)")
 	flag.Parse()
+
+	// Load config file (flag > env > config > default)
+	cfgPath := *configPath
+	if cfgPath == "" {
+		cfgPath = core.ConfigPath()
+	}
+	cfg, err := core.LoadConfig(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Apply config values as defaults (CLI flags override)
+	if *workspace == "" && cfg.Workspace != "" {
+		*workspace = cfg.Workspace
+	}
+	if *model == "gpt-5.4" && cfg.Model != "gpt-5.4" {
+		*model = cfg.Model
+	}
+	if *logLevel == "info" && cfg.LogLevel != "" {
+		*logLevel = cfg.LogLevel
+	}
+	if *logFormat == "text" && cfg.LogFormat != "" {
+		*logFormat = cfg.LogFormat
+	}
+	if *maxTurns == 10 && cfg.MaxTurns != 0 {
+		*maxTurns = cfg.MaxTurns
+	}
+	if cfg.NoTools {
+		*noTools = true
+	}
 
 	core.InitLogger(*logLevel, *logFormat)
 

@@ -1,0 +1,38 @@
+# tau configuration
+# Copy to ~/.tau/tau.yaml or use --config <path>
+
+workspace: ""           # default: current directory
+data_dir: "~/.tau"      # sessions, skills, extensions
+provider: openai        # openai, anthropic, google, azure, mistral, bedrock, vertex
+model: gpt-5.4          # default model
+log_level: info         # debug, info, warn, error
+log_format: text        # text, json
+max_turns: 10           # max turns per conversation
+health_addr: ""         # e.g., :8080
+
+# Provider API keys (env var names, not values)
+providers:
+  openai: ANTHROPIC_AUTH_TOKEN
+  anthropic: ANTHROPIC_AUTH_TOKEN
+
+# Tool enable/disable
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  task: true
+  task_tracker: true
+  web_search: true
+  web_fetch: true
+  workspace_diag: true
+
+# Skill directories
+skills:
+  paths:
+    - ~/.tau/skills
+
+# Sandbox
+sandbox: none           # docker, podman, none
