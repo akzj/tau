@@ -43,6 +43,31 @@ type ToolExecuteFn func(
 	onUpdate func(PartialResult),
 ) (ToolResult, error)
 
+// PreparedTool holds the result of a tool's prepare phase.
+type PreparedTool struct {
+	CallID   string
+	ToolName string
+	Params   any // validated/transformed params for Execute
+	State    any // opaque state passed to Finalize
+}
+
+// ThreePhaseTool is an optional interface for tools that want
+// separate prepare / execute / finalize phases.
+// Loop detects this interface and uses the three-phase path;
+// otherwise falls back to single-stage Tool.Execute.
+type ThreePhaseTool interface {
+	// Prepare validates inputs and returns a PreparedTool.
+	// Called synchronously in the event loop.
+	Prepare(ctx context.Context, callID string, params any) (PreparedTool, error)
+
+	// Execute runs the tool logic. Called in a goroutine for parallel execution.
+	Execute(ctx context.Context, prepared PreparedTool, onUpdate func(PartialResult)) (ToolResult, error)
+
+	// Finalize cleans up after execution (e.g., close temp files, log).
+	// Called after Execute completes, regardless of error.
+	Finalize(ctx context.Context, prepared PreparedTool, result ToolResult) error
+}
+
 // ToolSchema is the three-in-one contract: typed Go struct, LLM JSON Schema, runtime validator.
 // Implementations live in toolspec/ (codegen-generated).
 type ToolSchema interface {
@@ -58,6 +83,7 @@ type Tool struct {
 	Execute     ToolExecuteFn
 	PrepareArgs func(raw json.RawMessage) (any, error) // optional pre-validate
 	Mode        ExecutionMode
+	ThreePhase  ThreePhaseTool // optional three-phase implementation
 }
 
 // ToolRegistry is Session-scoped.

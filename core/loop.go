@@ -261,23 +261,40 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 					go func(idx int, tc ToolCallRequest) {
 						defer wg.Done()
 						if tool, ok := r.sess.Tools.Get(tc.ToolName); ok {
-							var params any
-							raw := json.RawMessage(tc.Args)
-							if tool.PrepareArgs != nil {
-								var err error
-								params, err = tool.PrepareArgs(raw)
+							// Detect three-phase tool
+							if tp := tool.ThreePhase; tp != nil {
+								prepared, err := tp.Prepare(ctx, tc.CallID, json.RawMessage(tc.Args))
 								if err != nil {
 									results[idx] = toolResult{tc.CallID, ToolResult{}, err}
 									return
 								}
+								result, err := tp.Execute(ctx, prepared, func(pr PartialResult) {
+									r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
+								})
+								if finalizeErr := tp.Finalize(ctx, prepared, result); finalizeErr != nil {
+									// Log but don't override result error
+								}
+								results[idx] = toolResult{tc.CallID, result, err}
+							} else {
+								// Fallback: single-stage Tool.Execute
+								var params any
+								raw := json.RawMessage(tc.Args)
+								if tool.PrepareArgs != nil {
+									var err error
+									params, err = tool.PrepareArgs(raw)
+									if err != nil {
+										results[idx] = toolResult{tc.CallID, ToolResult{}, err}
+										return
+									}
+								}
+								if params == nil && tc.Args != "" {
+									params = raw
+								}
+								result, err := tool.Execute(ctx, tc.CallID, params, func(pr PartialResult) {
+									r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
+								})
+								results[idx] = toolResult{tc.CallID, result, err}
 							}
-							if params == nil && tc.Args != "" {
-								params = raw
-							}
-							result, err := tool.Execute(ctx, tc.CallID, params, func(pr PartialResult) {
-								r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
-							})
-							results[idx] = toolResult{tc.CallID, result, err}
 						} else {
 							results[idx] = toolResult{tc.CallID, ToolResult{}, fmt.Errorf("tool not found: %s", tc.ToolName)}
 						}
