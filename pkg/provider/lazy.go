@@ -12,6 +12,7 @@ import (
 	"github.com/akzj/tau/providers/google-genai"
 	"github.com/akzj/tau/providers/mistral"
 	"github.com/akzj/tau/providers/openai-completions"
+	"github.com/akzj/tau/providers/vertex-ai"
 )
 
 // ProviderLoader lazy-loads and caches providers.
@@ -49,6 +50,9 @@ func NewProviderLoader() *ProviderLoader {
 	})
 	l.RegisterFactory("bedrock", func() (core.Provider, error) {
 		return bedrock.NewProvider()
+	})
+	l.RegisterFactory("vertex", func() (core.Provider, error) {
+		return vertex_ai.NewProvider()
 	})
 	l.RegisterFactory("faux", func() (core.Provider, error) {
 		return faux.New(), nil
