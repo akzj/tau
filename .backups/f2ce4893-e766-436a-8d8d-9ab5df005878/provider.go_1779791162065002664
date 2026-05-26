@@ -7,15 +7,9 @@ type WireAPI string
 
 // Known wire protocols.
 const (
-	WireOpenAICompletions    WireAPI = "openai-completions"
-	WireOpenAIResponses      WireAPI = "openai-responses"
-	WireAnthropicMessages    WireAPI = "anthropic-messages"
-	WireGoogleGenerativeAI   WireAPI = "google-generative-ai"
-	WireGoogleVertex         WireAPI = "google-vertex"
-	WireBedrockConverse      WireAPI = "bedrock-converse"
-	WireMistralConversations WireAPI = "mistral-conversations"
-	WireAzureOpenAIResponses WireAPI = "azure-openai-responses"
-	WireOpenAICodexResponses WireAPI = "openai-codex-responses"
+	WireOpenAICompletions WireAPI = "openai-completions"
+	WireOpenAIResponses   WireAPI = "openai-responses"
+	WireAnthropicMessages WireAPI = "anthropic-messages"
 )
 
 // ModelSpec identifies a model and its wire protocol.
@@ -87,24 +81,18 @@ type OAuthSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
-// WireCompat is a sealed interface for wire-specific compatibility transforms.
-type WireCompat interface {
-	wireCompat() // sealed marker
-}
-
-// VendorTypedRouting is a sealed interface for vendor-specific routing logic.
-type VendorTypedRouting interface {
-	vendorRouting() // sealed marker
+// Compat is a sealed interface for wire-specific compatibility transforms.
+type Compat interface {
+	compatMarker()
 }
 
 // VendorConfig registers a vendor with its wire protocol.
 type VendorConfig struct {
-	API     WireAPI
+	WireAPI WireAPI
 	BaseURL string
-	OAuth   OAuthSource         // nil for API-key auth
+	OAuth   OAuthSource // nil for API-key auth
 	Models  []ModelSpec
-	Routing VendorTypedRouting  // vendor-specific routing
-	Compat  WireCompat          // wire-specific compatibility transforms
+	Compat  Compat
 }
 
 // ProviderRegistry is scoped to a Session (NOT package-level).
@@ -127,12 +115,12 @@ func (r *ProviderRegistry) RegisterVendor(name string, cfg VendorConfig) error {
 	if name == "" {
 		return &TauError{Code: ErrSession, Message: "vendor name must not be empty"}
 	}
-	if cfg.API == "" {
-		return &TauError{Code: ErrSession, Message: "vendor must specify an API"}
+	if cfg.WireAPI == "" {
+		return &TauError{Code: ErrSession, Message: "vendor must specify a WireAPI"}
 	}
 	r.vendors[name] = cfg
-	if _, exists := r.defaults[cfg.API]; !exists {
-		r.defaults[cfg.API] = name
+	if _, exists := r.defaults[cfg.WireAPI]; !exists {
+		r.defaults[cfg.WireAPI] = name
 	}
 	return nil
 }

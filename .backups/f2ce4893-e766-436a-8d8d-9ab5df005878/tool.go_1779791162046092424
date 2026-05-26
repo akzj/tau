@@ -49,7 +49,6 @@ type Tool struct {
 	Description string
 	Schema      json.RawMessage // JSON Schema for LLM
 	Execute     ToolExecuteFn
-	PrepareArgs func(raw json.RawMessage) (any, error) // optional pre-validate
 	Mode        ExecutionMode
 }
 

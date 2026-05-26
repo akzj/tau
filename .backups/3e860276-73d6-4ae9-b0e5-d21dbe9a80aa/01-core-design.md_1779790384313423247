@@ -1,0 +1,171 @@
+# 01 — Core Design
+
+> **Scope**: The six abstractions forming tau's agent runtime kernel.
+> **Basis**: `04-design-principles.md` (R1–R6, P1+P2). Next: `02-provider.md`.
+
+---
+
+## §1 — Loop
+
+```go
+type Loop interface {
+    Prompt(ctx context.Context, sess *Session, input UserInput) (*Run, error)
+    Continue(ctx context.Context, sess *Session) (*Run, error)  // internal, not product-facing
+}
+type Run struct {
+    Events <-chan AgentEvent   // high-level semantic events, NOT raw provider tokens
+    Done   func() (RunResult, error)
+    Cancel func()              // cooperative; tools/providers honor ctx.Done()
+}
+```
+
+- **Stateless** (C6+C1): state → Session; Loop is a pure function runner.
+- **Two entries**, not four. Pi's `steer`/`followUp` deferred to Phase 5+ (A2 #4: insufficient evidence).
+- **Double-layer stream** (A2 #2): Loop consumes raw `ProviderEvent` internally → emits semantic `AgentEvent`.
+- **Cancel is cooperative** (A1 §3). `ctx.Done()` is the signal; in-flight `Execute` is not forcibly killed.
+
+---
+
+## §2 — Session
+
+```go
+type Session struct {
+    ID           SessionID
+    Transcript   *Transcript
+    Tools        *ToolRegistry
+    Providers    *ProviderRegistry
+    Hooks        *HookSet
+    SystemPrompt SystemPromptFn    // function, NOT mutable string (A2 #7)
+}
+type SystemPromptFn func(sess *Session) (string, error)
+func NewSession(ctx context.Context, opts SessionOptions) (*Session, error)
+```
+
+- **Isolation boundary** (C1/R4). All mutable state lives here. No package-level `DefaultSession`.
+- **`SystemPrompt` is a function**: kills `agent.state.systemPrompt = X` mutation anti-pattern. Dynamic needs (skills from disk) use closure.
+- **Context scoping**: `Loop.Prompt` derives child ctx. `Session.Cancel()` → session scope; `Run.Cancel()` → current run only.
+- **Scope discipline**: "Is this per-session mutable state?" No → push out (to `LoopOptions`, `ProviderOptions`, or package-level `var`).
+
+---
+
+## §3 — Transcript
+
+```go
+type Transcript struct { /* hidden */ }
+func (t *Transcript) Append(msgs ...Message) (Position, error)
+func (t *Transcript) Slice(from, to Position) []Message          // snapshot, non-blocking
+func (t *Transcript) Subscribe(cursor Position) (<-chan Message, func())  // real-time bridge
+type Position int64
+```
+
+- **Flat, not tree** (design note). Transcript is a linear append-only log. Fork/branch/undo/time-travel are product-layer concerns — build a tree view on top, not inside core. Pi's `LeafEntry` is the product-layer reference.
+- **No internal mirror** (C6). Loop reads from `Transcript.Slice`, never from a cached copy.
+- **`Subscribe`** bridges to TUI/WebSocket consumers (see `05-access-points.md`). Loop is decoupled.
+
+---
+
+## §4 — AgentEvent
+
+```go
+type AgentEvent interface { eventMarker(); Timestamp() time.Time }  // sealed
+
+type MessageStart   struct{ MessageID string; Role Role }
+type MessageDelta   struct{ MessageID string; ContentDelta string }
+type MessageEnd     struct{ MessageID string }
+type ToolCallStart  struct{ CallID, ToolName string; Args json.RawMessage }
+type ToolCallUpdate struct{ CallID string; Partial PartialResult }
+type ToolCallEnd    struct{ CallID string; Result ToolResult }
+type TurnStart      struct{ TurnID string }
+type TurnEnd        struct{ TurnID string; Reason TurnEndReason }
+type ErrorEvent     struct{ Err error; Code ErrorCode }
+```
+
+- **Sealed interface**: `eventMarker()` private method → compiler-guaranteed exhaustive type-switch. Adding event types requires core-package change → enforced design review (C2/R6).
+- **Not raw `ProviderEvent`** (A2 #3: shrink boundary). Token deltas consumed inside Loop; product sees merged `MessageDelta`.
+- **`ToolCallUpdate` caveat**: parallel batches may reorder partials vs finals. Product layers needing strict ordering should self-sort by `CallID + seq`.
+
+---
+
+## §5 — Tool
+
+```go
+type Tool struct {
+    Name, Description string
+    Schema             ToolSchema
+    Execute            ToolExecuteFn
+    PrepareArgs        func(raw json.RawMessage) (any, error)  // optional
+    Mode               ExecutionMode                            // Sequential | Parallel
+}
+type ToolExecuteFn func(ctx context.Context, callID string, params any,
+    onUpdate func(PartialResult),    // synchronous callback, NOT channel (A1 §3)
+) (ToolResult, error)
+
+type ToolResult struct {
+    Content   []Content
+    Details   any         // opaque to core
+    Terminate bool        // hint: entire batch must terminate for actual stop
+}
+type ToolRegistry struct{ /* ... */ }
+func (r *ToolRegistry) Register(t Tool) error
+func (r *ToolRegistry) Get(name string) (Tool, bool)
+func (r *ToolRegistry) Active() []Tool
+func (r *ToolRegistry) SetActive(names []string)
+```
+
+- **Single canonical Tool** (C4). Product layers wrap with UI/prompt fields, degrade to `Tool`.
+- **`onUpdate` is a callback, not a channel**: channels complicate close/buffer/ctx coordination. Partial frequency ≤10/s — callback sufficient. Phase 5+ revisit if ≥100/s.
+- **Error → `return err`** (not encoded in Content). **Terminate → hint**, only triggers when entire batch agrees.
+- **`PrepareArgs` optional**: compatibility valve for older models emitting raw-string args.
+
+---
+
+## §6 — Hook
+
+```go
+type Chain[T any] interface {
+    Add(handler func(context.Context, T) (T, error))
+    Run(ctx context.Context, init T) (T, error)
+}
+type LastWins[T any] interface {
+    Set(handler func(context.Context, T) (*T, error))          // duplicate → panic (P2)
+    Observe(handler func(context.Context, T))                  // read-only
+    Run(ctx context.Context, init T) (T, error)
+}
+type HookSet struct {
+    BeforeProviderRequest LastWins[StreamRequest]
+    TransformContext      Chain[[]Message]
+    BeforeToolCall        Chain[ToolCallEvent]
+    AfterToolCall         Chain[ToolResultEvent]
+}
+```
+
+- **Two distinct interfaces** (C5). `Chain` has `Add`; `LastWins` has `Set`/`Observe`. Compiler catches mis-registration. No single-API-with-mode-flag.
+- **`LastWins.Set` duplicate → panic** (P2 panic-fast). Hook registration is init-phase config; duplicate = config bug.
+- **Fields driven by product-layer use cases** (A2 11 access points). No speculative hooks. G4 路径A adds `BeforeCompaction LastWins[CompactionRequest]` — see `06-compaction.md`.
+
+---
+
+## §7 — Skills (Deferred)
+
+Skills are **not a first-class core abstraction** (G3):
+1. No behavioral data on LLM proactive SKILL.md reading (B8: "待验证必抄").
+2. Pi's coding-agent assembles skills via system prompt concatenation; agent-core is transparent.
+3. Tau's `SystemPromptFn` closure already supports: load SKILL.md → format → return. No new types needed.
+
+Phase 5+ may revisit if behavioral evidence warrants.
+
+---
+
+## §8 — Connection Points
+
+| This file → | Why |
+|-------------|-----|
+| `02-provider.md` | `ProviderRegistry` on Session; `StreamRequest` consumed by Loop internally. |
+| `03-tool-schema.md` | `Tool.Schema` implements `ToolSchema` — schema-first codegen. |
+| `05-access-points.md` | Every access point is a surface on these abstractions. |
+| `06-compaction.md` | `HookSet` receives `BeforeCompaction` (G4 路径A). |
+| `07-go-structure.md` | All types here → `core/` package. |
+
+---
+
+*01-core-design.md — six abstractions, one kernel.*

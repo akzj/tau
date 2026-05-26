@@ -1,4 +1,4 @@
-# Phase 2 — Tau 核心设计稿（v1.2）
+# Phase 2 — Tau 核心设计稿（v1.0）
 
 > **范围**：tau 核心两层（agent core + provider 抽象），Go。**不含产品层本体，含产品层接入点。**
 > **基线约束**：[`phase1-to-phase2-handoff.md`](./phase1-to-phase2-handoff.md) §1 C1-C10
@@ -149,130 +149,48 @@ type Position int64
 ```go
 package core
 
-// ==================== WireAPI & ModelSpec (v1.2 新增) ====================
-
-// WireAPI 是 LLM 协议层 dispatch key。pi 实证：KnownApi 9 type union + resolveApiProvider(model.api) dispatch。
-// 9 wire impl 在 package init 期注册 — 用户不可新增 wire（新增需改 core 包 + 新增 compat type）。
-type WireAPI string
-const (
-    WireOpenAICompletions WireAPI = "openai-completions"
-    WireOpenAIResponses          = "openai-responses"
-    WireAnthropicMessages        = "anthropic-messages"
-    WireGoogleGenerativeAI       = "google-generative-ai"
-    WireGoogleVertex             = "google-vertex"
-    WireBedrockConverse          = "bedrock-converse"
-    WireMistralConversations     = "mistral-conversations"
-    WireAzureOpenAIResponses     = "azure-openai-responses"
-    WireOpenAICodexResponses     = "openai-codex-responses"
-)
-
-// ModelSpec 定义 LLM 模型身份。
-type ModelSpec struct {
-    Name    string
-    WireAPI WireAPI   // dispatch key → wire impl 表（v1.2 新增）
-}
-
-// ==================== Provider 接口（不变的核心契约） ====================
-
+// Provider is a pure function: (ctx, model, ctx-data, opts) → event stream.
+// NOT a stateful client object (C10).
 type Provider interface {
+    // Stream is the primary interface. Returns event stream.
+    // ProviderEvents are RAW provider-level events (token deltas, tool call
+    // chunks); Loop transforms these into AgentEvents.
     Stream(ctx context.Context, req StreamRequest) (<-chan ProviderEvent, error)
+
+    // Complete is one-shot non-streaming completion.
+    // Used for compaction / summarization tasks that don't need the full loop
+    // (A2 takeaway: completeSimple is a real access point).
     Complete(ctx context.Context, req CompleteRequest) (CompleteResponse, error)
 }
 
-// ==================== StreamRequest（v1.2 扩展） ====================
-
+// StreamRequest carries everything Provider needs. NO product-specific fields (C7).
 type StreamRequest struct {
-    Model             ModelSpec
-    Messages          []Message
-    Tools             []ToolSpec
-    Options           ProviderOptions
-    TransformToolName func(string) string         // C7 caller-injected
-    OnPayload         func(payload any) (any, error) // v1.2: pi types.ts:109
-    OnResponse        func(resp HTTPResponse)        // v1.2: pi types.ts:114
+    Model    ModelSpec
+    Messages []Message
+    Tools    []ToolSpec       // tool schemas only; not the executor (C7)
+    Options  ProviderOptions  // temperature, max_tokens, etc.
+    // Hook for caller-injected per-request transforms. The provider
+    // does NOT know specific tool names; transforms come from caller (C7).
+    TransformToolName func(string) string  // optional, default = identity
 }
 
-// ProviderEvent 嵌入 Usage（v1.2）。
-type ProviderEvent struct {
-    // ... existing fields ...
-    Usage *Usage // partial/nil for streaming
-}
-
-// ==================== Usage & CompleteResponse ====================
-
-type Usage struct {
-    Input, Output, CacheRead, CacheWrite int
-}
-
-type CompleteResponse struct {
-    Content []Content
-    Usage   Usage
-}
-
-// ==================== WireCompat（sealed interface — R1 禁 any） ====================
-
-type WireCompat interface {
-    wireCompat() // sealed marker
-}
-// 3 concrete types, 每个 wire protocol 一个：
-type OpenAICompletionsCompat struct { /* apiKey, org, ... */ }
-type AnthropicMessagesCompat   struct { /* apiKey, authToken, ... */ }
-type OpenAIResponsesCompat     struct { /* apiKey, ... */ }
-
-// ==================== ProviderRegistry form B ====================
-
-// VendorConfig 是产品层注册 vendor 的配置 struct。
-type VendorConfig struct {
-    API     WireAPI
-    BaseURL string
-    OAuth   OAuthSource         // per-call token refresh（pi getApiKey 模式）
-    Models  []ModelSpec
-    Routing VendorTypedRouting  // vendor-typed, 不嵌在 Compat 里（A2 Q4 evidence）
-    Compat  WireCompat          // init 时 invariant check 对齐 cfg.API
-}
-
-type VendorTypedRouting interface {
-    vendorRouting() // sealed marker
-}
-
+// ProviderRegistry is scoped to a Session (R4 / C1).
+// There is NO package-level provider registry.
 type ProviderRegistry struct{ /* ... */ }
-// RegisterVendor: cfg.API → wire impl 表 → 创建 bound Provider。
-// 同名 clobber 或 API/Compat 不一致 → panic（P2 MustCompile 模式）。
-func (r *ProviderRegistry) RegisterVendor(name string, cfg VendorConfig) error
+
+func (r *ProviderRegistry) Register(name string, p Provider) error
 func (r *ProviderRegistry) Get(name string) (Provider, bool)
-
-#### Compat sealed vs 泛型 trade-off
-
-**选 sealed 而非泛型 `Compat[A WireAPI]`**：泛型路径编译期保证 vendor.API 与 Compat 类型一致（R1 强落地），但传染性高——VendorConfig 必须带类型参数、RegisterVendor 必须 `[A WireAPI]`，调用方 cognitive cost 大。Sealed 路径 R1 降级为 runtime invariant check（`RegisterVendor` 内 `assertCompatMatchesAPI`，不对 → panic），P2 MustCompile 模式精确适用——init 期 config bug 1 秒内暴露。**接受 R1 compile→runtime 降级 + P2 panic-fast 兜底。**
-
-#### Vendor vs Wire Protocol 双层说明
-
-**为什么需要双层**：pi 实证——30 vendor（OpenAI / Anthropic / OpenRouter / GitHub Copilot / ...）只用 9 种 wire protocol。**vendor 是业务实体（谁的模型 + 定价），wire 是协议实体（怎么调用）**。pi 混淆两者（30 vendor → 包级 global registry + compat 按 wire 不按 vendor），tau 在注册层区分：
-
-```
-产品层（coding-agent / webui）
-  └─ RegisterVendor("my-openrouter", VendorConfig{
-         API: WireOpenAICompletions,    // ← dispatch
-         BaseURL: "https://openrouter.ai",
-         OAuth: openrouterTokenSource,
-         Compat: OpenAICompletionsCompat{...},
-         Routing: OpenRouterRouting{...}, // vendor-typed, NOT in Compat
-     })
-  └─ 内部 wire impl 表 (9 entries): openai-completions → wireImpl{...}, ...
 ```
 
-**设计结论**：用户面=vendor 粒度（name+models+auth+routing），wire impl 表=protocol 粒度（9 个 init 注册，ModelSpec.WireAPI dispatch）。**新增 vendor** = 1 次 RegisterVendor 调用（不需改 core 包）。**新增 wire** = 改 core 包+新 compat type+const+wire impl（罕见，需发版）。Routing vendor-typed 不在 Compat 里（A2 Q4：pi OpenRouterRouting 嵌 OpenAICompletionsCompat = 最低公分母反模式）。
+**关键设计**：
+- **C10/C7/C1 三联落地**：函数式生产者无 client 生命周期；不带产品名/tool 名（特殊化通过调用方注入 `TransformToolName`，反 pi `anthropic.ts:69-89` 硬编码 17 个 Claude Code 工具名）；ProviderRegistry 是 Session 字段非包级 var。
+- **`Stream` 返回 raw `ProviderEvent`**（不是高层 `AgentEvent`）：双层 stream 分层（A2 takeaway #2），Loop 内部消费 raw、对外暴露语义事件。
+- **`Complete` 单独入口**（A2：compaction / summarization 用），不强制走 Loop。
+- **OAuth 是实现细节**，不是子类型 interface（注册时绑定 token source 即可）。
 
-**关键设计**（保留 v1.1）：
-- **C10/C7/C1 落地**：函数式生产者无 client 生命周期；不带产品名/tool 名（`TransformToolName` 注入，反 pi 硬编码 17 个 Claude Code 工具名）；ProviderRegistry 是 Session 字段非包级 var。
-- **`Stream` 返回 raw `ProviderEvent`**（非高层 `AgentEvent`）：双层 stream（A2 #2），Loop 内部消费 raw、对外暴露语义事件。
-- **`Complete` 单独入口**（A2：compaction / summarization），不强制走 Loop。
-- **OnPayload/OnResponse 非 Hook**：证据 `grep registerHook|onPayloadHook|hooks.onPayload = 0`——pi `types.ts:109/114` 是 StreamOptions 字段，与 `TransformToolName` 同模式，§2.8 HookSet 红线不破。
-- **OAuth per-call**：short-lived token（GitHub Copilot / OpenAI Codex）在长 tool 期间可能过期，provider 实现应支持 per-call refresh（pi `getApiKey` 模式）。
-- **`RegisterWireImpl` 设计意图**：`core/wire/` 包外不可调用，lint 推 Phase 4 重审清单 R8（v1.2 仅 design intent 注释）。
+**divergence-from-pi**：pi 的 `streamSimple/completeSimple` 是包级函数（违反 R4）；tau 是 Session-scoped 实例方法。
 
-**divergence-from-pi**：pi `streamSimple/completeSimple` 是包级函数（违反 R4）+ `apiProviderRegistry` 是包级全局 mutable map。tau 升级为 Session-scoped wire/vendor 双层 + RegisterVendor 用户面。
-
-**W3-lite 差异 A 对照说明**：3 家 Go SDK 库都用 iterator/callback 而非 channel。tau 选 channel 是 harness 层有意识取舍——channel 是 Go 唯一原生多源融合原语，Loop 需在同一 select 融合 provider/tool/cancel 三源。
+**W3-lite 差异 A 对照说明**：3 家 Go SDK 库都用 iterator/callback 而非 channel。tau 选 channel 是 **harness 层有意识取舍**——channel 是 Go 唯一原生多源融合原语，Loop 需要在同一 select 融合 provider/tool/cancel 三源；SDK 消费者是用户（泄漏责任用户担），harness 消费者是 Loop（泄漏责任已封装）。
 
 ---
 
@@ -702,11 +620,10 @@ func MinimalAgent(ctx context.Context, openaiKey string) error {
 7. **G4 砍 compaction execute hook** 已用 R2 + 量化成本论证升级（§6 G4），并显式化"未来验证 trigger"——但**核心假设仍未验证**：产品层 Phase 5+ 能否真用 `Provider.Complete + Transcript` 自己做 compaction，今天没有 PoC。Transcript 的 Subscribe/Slice 接口是为消费设计的，**写入路径是否支持产品层做 "summarize → replace tail" 这类 compaction 操作**未验证。如果验证失败，G4 决策要回退。
 8. **Hook 形态决策有 v0.6 短暂折叠 → v0.7 回滚到双 interface 的过程留痕**（§2.8 演化记录）。回滚理由是 trade-off 重审后发现 R2 收益是假象（单 Chain 方案需新增 errcheck lint 才安全等价）。**留痕风险**：未来 reviewer 可能误读"折叠尝试"作为"折叠合理"的证据，需要 reviewer 看完整 §2.8 演化段才能理解。Phase 4 PRODUCE 时如此节内容稳定，可考虑只保留最终决策段，把演化历程移到 ADR。
 9. **B9 决策的 Anthropic 网关 caveat**（§4）：oneOf 失效不区分协议/网关问题。Phase 5+ 第一次 Anthropic 产品落地必须用官方 API + strict mode 二验，否则 Anthropic-side 的 schema 约束力是未知数。
-10. **wire-protocol 维度由 Phase 3 audit 反向触发**（v1.2 §2.4）：form B + Compat 强类型化是 Owner 裁决（`ltm://team/decisions/008-phase2-v1.2-trigger`）。原 v1.1 仅"Provider 是函数式接口"未区分 vendor/wire 双层——pi 30 vendor → 9 wire 的实证是 Phase 3 才补入。**风险**：sealed interface Compat 接受 R1 compile→runtime 降级 + P2 panic-fast 兜底——如果未来失误绕过 invariant check 导致生产错配，R1 不成立。Phase 4 PRODUCE 阶段应做一次专门的 Compat API review。
 
 ---
 
 ## 文档版本
 - v0.1 大纲 → v0.5 正文初稿 → v0.6 W3-lite + B9 PoC 整合 → v0.7 Hook 折叠回滚 + panic-fast 加固
-- v1.1 行数压缩 + 拆 4 独立文件（naming-map / self-doubt / rule-enforcement / grey-resolutions）
-- **v1.2**（当前）：§2.4 wire/vendor 双层升级（form B + Compat sealed + Usage + OAuth + OnPayload/OnResponse）— Phase 3 audit 反向触发
+- **v1.0**（当前）：行数压缩 + 拆 4 独立文件（naming-map / self-doubt / rule-enforcement / grey-resolutions）
+- v1.0 行数压缩 + 拆分独立文件后定稿（≤500 行主稿 + 拆出独立文件若干）

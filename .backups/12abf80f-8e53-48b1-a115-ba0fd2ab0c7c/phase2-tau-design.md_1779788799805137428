@@ -1,4 +1,4 @@
-# Phase 2 — Tau 核心设计稿（v1.2）
+# Phase 2 — Tau 核心设计稿（v1.0）
 
 > **范围**：tau 核心两层（agent core + provider 抽象），Go。**不含产品层本体，含产品层接入点。**
 > **基线约束**：[`phase1-to-phase2-handoff.md`](./phase1-to-phase2-handoff.md) §1 C1-C10
@@ -702,11 +702,10 @@ func MinimalAgent(ctx context.Context, openaiKey string) error {
 7. **G4 砍 compaction execute hook** 已用 R2 + 量化成本论证升级（§6 G4），并显式化"未来验证 trigger"——但**核心假设仍未验证**：产品层 Phase 5+ 能否真用 `Provider.Complete + Transcript` 自己做 compaction，今天没有 PoC。Transcript 的 Subscribe/Slice 接口是为消费设计的，**写入路径是否支持产品层做 "summarize → replace tail" 这类 compaction 操作**未验证。如果验证失败，G4 决策要回退。
 8. **Hook 形态决策有 v0.6 短暂折叠 → v0.7 回滚到双 interface 的过程留痕**（§2.8 演化记录）。回滚理由是 trade-off 重审后发现 R2 收益是假象（单 Chain 方案需新增 errcheck lint 才安全等价）。**留痕风险**：未来 reviewer 可能误读"折叠尝试"作为"折叠合理"的证据，需要 reviewer 看完整 §2.8 演化段才能理解。Phase 4 PRODUCE 时如此节内容稳定，可考虑只保留最终决策段，把演化历程移到 ADR。
 9. **B9 决策的 Anthropic 网关 caveat**（§4）：oneOf 失效不区分协议/网关问题。Phase 5+ 第一次 Anthropic 产品落地必须用官方 API + strict mode 二验，否则 Anthropic-side 的 schema 约束力是未知数。
-10. **wire-protocol 维度由 Phase 3 audit 反向触发**（v1.2 §2.4）：form B + Compat 强类型化是 Owner 裁决（`ltm://team/decisions/008-phase2-v1.2-trigger`）。原 v1.1 仅"Provider 是函数式接口"未区分 vendor/wire 双层——pi 30 vendor → 9 wire 的实证是 Phase 3 才补入。**风险**：sealed interface Compat 接受 R1 compile→runtime 降级 + P2 panic-fast 兜底——如果未来失误绕过 invariant check 导致生产错配，R1 不成立。Phase 4 PRODUCE 阶段应做一次专门的 Compat API review。
 
 ---
 
 ## 文档版本
 - v0.1 大纲 → v0.5 正文初稿 → v0.6 W3-lite + B9 PoC 整合 → v0.7 Hook 折叠回滚 + panic-fast 加固
-- v1.1 行数压缩 + 拆 4 独立文件（naming-map / self-doubt / rule-enforcement / grey-resolutions）
-- **v1.2**（当前）：§2.4 wire/vendor 双层升级（form B + Compat sealed + Usage + OAuth + OnPayload/OnResponse）— Phase 3 audit 反向触发
+- **v1.0**（当前）：行数压缩 + 拆 4 独立文件（naming-map / self-doubt / rule-enforcement / grey-resolutions）
+- v1.0 行数压缩 + 拆分独立文件后定稿（≤500 行主稿 + 拆出独立文件若干）

@@ -1,4 +1,4 @@
-# Phase 2 — Tau 核心设计稿（v1.2）
+# Phase 2 — Tau 核心设计稿（v1.0）
 
 > **范围**：tau 核心两层（agent core + provider 抽象），Go。**不含产品层本体，含产品层接入点。**
 > **基线约束**：[`phase1-to-phase2-handoff.md`](./phase1-to-phase2-handoff.md) §1 C1-C10
@@ -708,5 +708,5 @@ func MinimalAgent(ctx context.Context, openaiKey string) error {
 
 ## 文档版本
 - v0.1 大纲 → v0.5 正文初稿 → v0.6 W3-lite + B9 PoC 整合 → v0.7 Hook 折叠回滚 + panic-fast 加固
-- v1.1 行数压缩 + 拆 4 独立文件（naming-map / self-doubt / rule-enforcement / grey-resolutions）
+- v1.0 行数压缩 + 拆 4 独立文件（naming-map / self-doubt / rule-enforcement / grey-resolutions）
 - **v1.2**（当前）：§2.4 wire/vendor 双层升级（form B + Compat sealed + Usage + OAuth + OnPayload/OnResponse）— Phase 3 audit 反向触发

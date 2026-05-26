@@ -6,7 +6,7 @@ import "sync"
 type Message struct {
 	Role       Role
 	Content    string
-	ToolCallID string            // for tool results
+	ToolCallID string          // for tool results
 	ToolCalls  []ToolCallRequest // for assistant tool call requests
 	MessageID  string
 }
@@ -17,9 +17,6 @@ type ToolCallRequest struct {
 	ToolName string
 	Args     string // JSON string
 }
-
-// Position is a stable cursor into the Transcript.
-type Position int64
 
 // Transcript is the authoritative message log. It is safe for concurrent use.
 type Transcript struct {
@@ -53,31 +50,4 @@ func (t *Transcript) Len() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return len(t.messages)
-}
-
-// Slice returns messages in the range [from, to). Positions are message indices.
-func (t *Transcript) Slice(from, to Position) []Message {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	n := Position(len(t.messages))
-	if from < 0 {
-		from = 0
-	}
-	if to < 0 || to > n {
-		to = n
-	}
-	if from > to {
-		from = to
-	}
-	result := make([]Message, int(to-from))
-	copy(result, t.messages[int(from):int(to)])
-	return result
-}
-
-// Subscribe returns a channel that receives future messages, starting from cursor.
-// The cancel func stops the subscription. Skeleton: returns empty no-op channel.
-func (t *Transcript) Subscribe(cursor Position) (<-chan Message, func()) {
-	ch := make(chan Message, 64)
-	cancel := func() { close(ch) }
-	return ch, cancel
 }

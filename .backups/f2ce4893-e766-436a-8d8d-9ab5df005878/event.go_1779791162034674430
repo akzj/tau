@@ -93,16 +93,6 @@ type ToolCallStart struct {
 func (ToolCallStart) agentEventMarker()          {}
 func (e ToolCallStart) Timestamp() time.Time { return e.Timestamp_ }
 
-// ToolCallUpdate carries a partial tool execution result update.
-type ToolCallUpdate struct {
-	Timestamp_ time.Time
-	CallID     string
-	Partial    PartialResult
-}
-
-func (ToolCallUpdate) agentEventMarker()          {}
-func (e ToolCallUpdate) Timestamp() time.Time { return e.Timestamp_ }
-
 // ToolCallEnd signals completion of a tool call with its result.
 type ToolCallEnd struct {
 	Timestamp_ time.Time

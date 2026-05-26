@@ -32,20 +32,15 @@ const (
 )
 
 // Loop drives one agent turn cycle.
-type Loop interface {
-	Prompt(ctx context.Context, sess *Session, input UserInput) (*Run, error)
-	Continue(ctx context.Context, sess *Session) (*Run, error)
-}
-
-type defaultLoop struct{}
+type Loop struct{}
 
 // NewLoop creates a new Loop.
-func NewLoop() Loop {
-	return &defaultLoop{}
+func NewLoop() *Loop {
+	return &Loop{}
 }
 
 // Prompt starts a new turn.
-func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput) (*Run, error) {
+func (l *Loop) Prompt(ctx context.Context, sess *Session, input UserInput) (*Run, error) {
 	// 1. Add user message to transcript
 	userMsg := Message{
 		Role:      RoleUser,
@@ -104,14 +99,9 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 	return run, nil
 }
 
-// Continue resumes a session — skeleton for demo.
-func (l *defaultLoop) Continue(ctx context.Context, sess *Session) (*Run, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
 // Run represents an in-flight turn.
 type Run struct {
-	loop     Loop
+	loop     *Loop
 	sess     *Session
 	events   chan AgentEvent
 	done     chan struct{}
@@ -215,21 +205,7 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 
 			// Execute tool if we have it registered
 			if tool, ok := r.sess.Tools.Get(acc.name); ok {
-				var params any
-				raw := json.RawMessage(argsJSON)
-				if tool.PrepareArgs != nil {
-					var err error
-					params, err = tool.PrepareArgs(raw)
-					if err != nil {
-						r.events <- ErrorEvent{Timestamp_: timeNow(), Err: err, Code: ErrTool}
-					}
-				}
-				if params == nil && argsJSON != "" {
-					params = raw
-				}
-				result, err := tool.Execute(ctx, pe.ToolCallID, params, func(pr PartialResult) {
-					r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: pe.ToolCallID, Partial: pr}
-				})
+				result, err := tool.Execute(ctx, pe.ToolCallID, json.RawMessage(argsJSON), func(pr PartialResult) {})
 				if err != nil {
 					r.events <- ErrorEvent{Timestamp_: timeNow(), Err: err, Code: ErrTool}
 				}
