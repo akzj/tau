@@ -313,6 +313,8 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 			switch ad.ContentBlock.Type {
 			case "tool_use":
 				toolCallID := ad.ContentBlock.ID
+				toolCallIDs = append(toolCallIDs, toolCallID)
+				toolBlockIDs = append(toolBlockIDs, ad.Index)
 				indexToToolID[ad.Index] = toolCallID
 				events <- core.ProviderEvent{
 					Type:      core.ProvToolCallStart,

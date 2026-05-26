@@ -285,10 +285,12 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 
 	scanner := bufio.NewScanner(body)
 	var (
-		msgID         string
-		currentEvent  string
-		dataLines     []string
-		indexToToolID = make(map[int]string)
+		msgID           string
+		currentEvent    string
+		dataLines       []string
+		toolCallIDs     []string // tool_use block IDs seen
+		toolBlockIDs    []int    // indices of tool_use blocks for end events
+		indexToToolID   = make(map[int]string)
 	)
 
 	flush := func() {
@@ -313,6 +315,8 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 			switch ad.ContentBlock.Type {
 			case "tool_use":
 				toolCallID := ad.ContentBlock.ID
+				toolCallIDs = append(toolCallIDs, toolCallID)
+				toolBlockIDs = append(toolBlockIDs, ad.Index)
 				indexToToolID[ad.Index] = toolCallID
 				events <- core.ProviderEvent{
 					Type:      core.ProvToolCallStart,
