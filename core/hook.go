@@ -39,3 +39,73 @@ type ToolResultEvent struct {
 	Result ToolResult
 	Err    error
 }
+
+// --- Chain implementation ---
+
+type chainImpl[T any] struct {
+	handlers []func(context.Context, T) (T, error)
+}
+
+// NewChain creates an empty Chain.
+func NewChain[T any]() Chain[T] {
+	return &chainImpl[T]{}
+}
+
+func (c *chainImpl[T]) Add(handler func(context.Context, T) (T, error)) {
+	c.handlers = append(c.handlers, handler)
+}
+
+func (c *chainImpl[T]) Run(ctx context.Context, init T) (T, error) {
+	val := init
+	for _, h := range c.handlers {
+		var err error
+		val, err = h(ctx, val)
+		if err != nil {
+			return val, err
+		}
+	}
+	return val, nil
+}
+
+// --- LastWins implementation ---
+
+type lastWinsImpl[T any] struct {
+	owner     func(context.Context, T) (*T, error)
+	observers []func(context.Context, T)
+	setCalled bool
+}
+
+// NewLastWins creates an empty LastWins hook.
+func NewLastWins[T any]() LastWins[T] {
+	return &lastWinsImpl[T]{}
+}
+
+func (lw *lastWinsImpl[T]) Set(handler func(context.Context, T) (*T, error)) {
+	if lw.setCalled {
+		panic("LastWins.Set called twice — duplicate owner handler (P2 panic-fast)")
+	}
+	lw.owner = handler
+	lw.setCalled = true
+}
+
+func (lw *lastWinsImpl[T]) Observe(handler func(context.Context, T)) {
+	lw.observers = append(lw.observers, handler)
+}
+
+func (lw *lastWinsImpl[T]) Run(ctx context.Context, init T) (T, error) {
+	// Observers run first (read-only)
+	for _, obs := range lw.observers {
+		obs(ctx, init)
+	}
+	// Owner runs last, can override value
+	if lw.owner != nil {
+		result, err := lw.owner(ctx, init)
+		if err != nil {
+			return init, err
+		}
+		if result != nil {
+			return *result, nil
+		}
+	}
+	return init, nil
+}

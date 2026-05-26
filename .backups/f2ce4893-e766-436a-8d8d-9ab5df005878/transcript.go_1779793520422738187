@@ -21,60 +21,22 @@ type ToolCallRequest struct {
 // Position is a stable cursor into the Transcript.
 type Position int64
 
-// subscriber tracks one active subscription.
-type subscriber struct {
-	ch     chan Message
-	cursor Position
-}
-
 // Transcript is the authoritative message log. It is safe for concurrent use.
 type Transcript struct {
-	mu          sync.RWMutex
-	messages    []Message
-	subscribers map[int]*subscriber
-	nextSubID   int
+	mu       sync.RWMutex
+	messages []Message
 }
 
 // NewTranscript creates an empty Transcript.
 func NewTranscript() *Transcript {
-	return &Transcript{
-		messages:    make([]Message, 0),
-		subscribers: make(map[int]*subscriber),
-	}
+	return &Transcript{messages: make([]Message, 0)}
 }
 
-// Append adds one or more messages to the transcript and notifies subscribers.
+// Append adds one or more messages to the transcript.
 func (t *Transcript) Append(msgs ...Message) {
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.messages = append(t.messages, msgs...)
-	newLen := Position(len(t.messages))
-
-	// Collect updates for each subscriber before releasing lock.
-	type subUpdate struct {
-		ch   chan Message
-		msgs []Message
-	}
-	var updates []subUpdate
-	for _, sub := range t.subscribers {
-		if sub.cursor < newLen {
-			msgs := make([]Message, int(newLen)-int(sub.cursor))
-			copy(msgs, t.messages[int(sub.cursor):int(newLen)])
-			updates = append(updates, subUpdate{ch: sub.ch, msgs: msgs})
-			sub.cursor = newLen
-		}
-	}
-	t.mu.Unlock()
-
-	// Send outside lock to avoid deadlock; non-blocking.
-	for _, u := range updates {
-		for _, m := range u.msgs {
-			select {
-			case u.ch <- m:
-			default:
-				// drop if subscriber is slow
-			}
-		}
-	}
 }
 
 // Messages returns a snapshot copy of all messages.
@@ -112,22 +74,10 @@ func (t *Transcript) Slice(from, to Position) []Message {
 	return result
 }
 
-// Subscribe returns a channel of new messages from cursor forward.
-// Multiple subscribers see the same events. Call cancel() to detach.
+// Subscribe returns a channel that receives future messages, starting from cursor.
+// The cancel func stops the subscription. Skeleton: returns empty no-op channel.
 func (t *Transcript) Subscribe(cursor Position) (<-chan Message, func()) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	id := t.nextSubID
-	t.nextSubID++
 	ch := make(chan Message, 64)
-	t.subscribers[id] = &subscriber{ch: ch, cursor: cursor}
-
-	cancel := func() {
-		t.mu.Lock()
-		delete(t.subscribers, id)
-		t.mu.Unlock()
-		close(ch)
-	}
+	cancel := func() { close(ch) }
 	return ch, cancel
 }
