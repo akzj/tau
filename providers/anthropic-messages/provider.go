@@ -414,9 +414,17 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 
 // --- compat ---
 
-// AnthropicMessagesCompat implements core.Compat for anthropic-messages wire.
-// Note: must be defined in core/ to actually satisfy the sealed interface.
-// Defined here for documentation completeness.
-type AnthropicMessagesCompat struct{}
+// Note: compat types are defined in core/provider.go as sealed WireCompat impls.
 
-func (AnthropicMessagesCompat) compatMarker() {}
+// Compat returns the wire-specific compatibility flags for this provider.
+func (p *AnthropicMessagesProvider) Compat() core.WireCompat {
+	return core.AnthropicMessagesCompat{
+		ThinkingFormat:        false,
+		SupportsCacheControl:  false,
+		MaxTokensField:        true,
+		SupportsStopSequences: true,
+		SupportsTopK:          false,
+		TemperatureField:      true,
+		SupportsToolChoice:    true,
+	}
+}

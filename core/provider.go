@@ -92,6 +92,52 @@ type WireCompat interface {
 	wireCompat() // sealed marker
 }
 
+// OpenAICompletionsCompat holds wire-specific flags for the OpenAI Chat Completions API.
+type OpenAICompletionsCompat struct {
+	SupportsReasoningEffort bool // supports reasoning_effort param
+	SupportsStrictMode      bool // supports strict mode for function calling
+	SupportsStore           bool // supports store param
+	MaxTokensField          bool // uses max_tokens (vs max_completion_tokens)
+	ResponseFormatField     bool // supports response_format
+	TemperatureField        bool // supports temperature (default true)
+	TopPField               bool // supports top_p
+	FrequencyPenaltyField   bool
+	PresencePenaltyField    bool
+	SupportsStop            bool
+	SupportsN               bool
+	SupportsLogprobs        bool
+	SupportsStreamOptions   bool
+}
+
+func (OpenAICompletionsCompat) wireCompat() {}
+
+// AnthropicMessagesCompat holds wire-specific flags for the Anthropic Messages API.
+type AnthropicMessagesCompat struct {
+	ThinkingFormat        bool // supports thinking (enabled/disabled)
+	SupportsCacheControl  bool // supports ephemeral cache_control
+	MaxTokensField        bool // uses max_tokens (always true for Anthropic)
+	SupportsStopSequences bool
+	SupportsTopK          bool
+	TemperatureField      bool
+	SupportsToolChoice    bool
+}
+
+func (AnthropicMessagesCompat) wireCompat() {}
+
+// OpenAIResponsesCompat holds wire-specific flags for the OpenAI Responses API.
+type OpenAIResponsesCompat struct {
+	SupportsThinking           bool // supports thinking via reasoning.effort
+	ReasoningEffortField       bool
+	SupportsStore              bool
+	SupportsPreviousResponseID bool
+	SupportsInstructions       bool
+	SupportsParallelToolCalls  bool
+	SupportsWebSearch          bool
+	SupportsTruncation         bool
+}
+
+func (OpenAIResponsesCompat) wireCompat() {}
+
 // VendorTypedRouting is a sealed interface for vendor-specific routing logic.
 type VendorTypedRouting interface {
 	vendorRouting() // sealed marker

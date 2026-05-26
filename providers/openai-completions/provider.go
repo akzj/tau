@@ -398,3 +398,22 @@ func buildToolDefs(tools []core.ToolSpec, transform func(string) string) []map[s
 	}
 	return defs
 }
+
+// Compat returns the wire-specific compatibility flags for this provider.
+func (p *OpenAICompletionsProvider) Compat() core.WireCompat {
+	return core.OpenAICompletionsCompat{
+		SupportsReasoningEffort: false,
+		SupportsStrictMode:      false,
+		SupportsStore:           false,
+		MaxTokensField:          false,
+		ResponseFormatField:     true,
+		TemperatureField:        true,
+		TopPField:               true,
+		FrequencyPenaltyField:   false,
+		PresencePenaltyField:    false,
+		SupportsStop:            true,
+		SupportsN:               false,
+		SupportsLogprobs:        false,
+		SupportsStreamOptions:   true,
+	}
+}
