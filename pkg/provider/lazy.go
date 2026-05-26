@@ -8,6 +8,7 @@ import (
 	"github.com/akzj/tau/pkg/testing/faux"
 	"github.com/akzj/tau/providers/anthropic-messages"
 	"github.com/akzj/tau/providers/azure-openai"
+	"github.com/akzj/tau/providers/bedrock"
 	"github.com/akzj/tau/providers/google-genai"
 	"github.com/akzj/tau/providers/mistral"
 	"github.com/akzj/tau/providers/openai-completions"
@@ -45,6 +46,9 @@ func NewProviderLoader() *ProviderLoader {
 	})
 	l.RegisterFactory("mistral", func() (core.Provider, error) {
 		return mistral.NewProvider()
+	})
+	l.RegisterFactory("bedrock", func() (core.Provider, error) {
+		return bedrock.NewProvider()
 	})
 	l.RegisterFactory("faux", func() (core.Provider, error) {
 		return faux.New(), nil
