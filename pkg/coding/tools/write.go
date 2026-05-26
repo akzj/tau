@@ -21,35 +21,47 @@ func WriteTool() core.Tool {
 		"required": ["file_path", "content"]
 	}`)
 
-	return core.Tool{
-		Name:        "write",
-		Description: "Write content to a file. Creates parent directories if needed.",
-		Schema:      Schema{Raw: schema},
-		Mode:        core.ModeSequential,
-		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+	tp := &toolThreePhase{
+		prepare: func(ctx context.Context, callID string, params any) (core.PreparedTool, error) {
 			var args struct {
 				FilePath string `json:"file_path"`
 				Content  string `json:"content"`
 			}
 			raw, _ := json.Marshal(params)
-			json.Unmarshal(raw, &args)
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return core.PreparedTool{}, err
+			}
 
 			path, err := ResolvePath(args.FilePath)
 			if err != nil {
-				return core.ToolResult{}, err
+				return core.PreparedTool{}, err
 			}
+			args.FilePath = path
 
-			// Check if file exists for overwrite detection
+			return core.PreparedTool{
+				CallID:   callID,
+				ToolName: "write",
+				Params:   args,
+			}, nil
+		},
+		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			var args struct {
+				FilePath string
+				Content  string
+			}
+			raw, _ := json.Marshal(prepared.Params)
+			json.Unmarshal(raw, &args)
+
 			overwritten := false
-			if _, err := os.Stat(path); err == nil {
+			if _, err := os.Stat(args.FilePath); err == nil {
 				overwritten = true
 			}
 
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(args.FilePath), 0755); err != nil {
 				return core.ToolResult{}, fmt.Errorf("write %s: cannot create parent dirs: %w", args.FilePath, err)
 			}
 
-			if err := os.WriteFile(path, []byte(args.Content), 0644); err != nil {
+			if err := os.WriteFile(args.FilePath, []byte(args.Content), 0644); err != nil {
 				return core.ToolResult{}, fmt.Errorf("write %s: %w", args.FilePath, err)
 			}
 
@@ -64,6 +76,21 @@ func WriteTool() core.Tool {
 			return core.ToolResult{
 				Content: []core.Content{{Type: "text", Text: msg}},
 			}, nil
+		},
+	}
+
+	return core.Tool{
+		Name:        "write",
+		Description: "Write content to a file. Creates parent directories if needed.",
+		Schema:      Schema{Raw: schema},
+		Mode:        core.ModeSequential,
+		ThreePhase:  tp,
+		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			prepared, err := tp.Prepare(ctx, callID, params)
+			if err != nil {
+				return core.ToolResult{}, err
+			}
+			return tp.Execute(ctx, prepared, onUpdate)
 		},
 	}
 }

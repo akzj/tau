@@ -25,12 +25,8 @@ func EditTool() core.Tool {
 		"required": ["file_path", "old", "new"]
 	}`)
 
-	return core.Tool{
-		Name:        "edit",
-		Description: "Find and replace text in a file. Creates .tau-backups/ before editing.",
-		Schema:      Schema{Raw: schema},
-		Mode:        core.ModeSequential,
-		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+	tp := &toolThreePhase{
+		prepare: func(ctx context.Context, callID string, params any) (core.PreparedTool, error) {
 			var args struct {
 				FilePath string `json:"file_path"`
 				Old      string `json:"old"`
@@ -38,17 +34,36 @@ func EditTool() core.Tool {
 				N        int    `json:"n"`
 			}
 			raw, _ := json.Marshal(params)
-			json.Unmarshal(raw, &args)
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return core.PreparedTool{}, err
+			}
 			if args.N == 0 {
 				args.N = -1
 			}
 
 			path, err := ResolvePath(args.FilePath)
 			if err != nil {
-				return core.ToolResult{}, err
+				return core.PreparedTool{}, err
 			}
+			args.FilePath = path
 
-			data, err := os.ReadFile(path)
+			return core.PreparedTool{
+				CallID:   callID,
+				ToolName: "edit",
+				Params:   args,
+			}, nil
+		},
+		execute: func(ctx context.Context, prepared core.PreparedTool, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			var args struct {
+				FilePath string
+				Old      string
+				New      string
+				N        int
+			}
+			raw, _ := json.Marshal(prepared.Params)
+			json.Unmarshal(raw, &args)
+
+			data, err := os.ReadFile(args.FilePath)
 			if err != nil {
 				return core.ToolResult{}, fmt.Errorf("edit %s: read: %w", args.FilePath, err)
 			}
@@ -73,7 +88,7 @@ func EditTool() core.Tool {
 			os.WriteFile(backupPath, data, 0644)
 
 			replaced := strings.Replace(content, args.Old, args.New, args.N)
-			if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
+			if err := os.WriteFile(args.FilePath, []byte(replaced), 0644); err != nil {
 				return core.ToolResult{}, fmt.Errorf("edit %s: write: %w", args.FilePath, err)
 			}
 
@@ -84,6 +99,21 @@ func EditTool() core.Tool {
 			return core.ToolResult{
 				Content: []core.Content{{Type: "text", Text: fmt.Sprintf("Replaced %d occurrence(s) in %s", count, args.FilePath)}},
 			}, nil
+		},
+	}
+
+	return core.Tool{
+		Name:        "edit",
+		Description: "Find and replace text in a file. Creates .tau-backups/ before editing.",
+		Schema:      Schema{Raw: schema},
+		Mode:        core.ModeSequential,
+		ThreePhase:  tp,
+		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			prepared, err := tp.Prepare(ctx, callID, params)
+			if err != nil {
+				return core.ToolResult{}, err
+			}
+			return tp.Execute(ctx, prepared, onUpdate)
 		},
 	}
 }
