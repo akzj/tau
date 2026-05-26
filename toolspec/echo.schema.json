@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tau.local/echo.schema.json",
+  "type": "object",
+  "properties": {
+    "msg": {
+      "type": "string",
+      "description": "The message to echo back"
+    }
+  },
+  "required": ["msg"],
+  "additionalProperties": false
+}
