@@ -57,6 +57,8 @@ type Session struct {
 	Conversation  *Conversation       // bounded conversation with token budget
 	MaxTokens     int                 // token budget (default 128000)
 	CtxStrategy   ContextStrategy     // context management strategy
+	TotalUsage    TokenUsage          // cumulative token/cost tracking
+	CallCount     int                 // number of LLM calls
 	ctx           context.Context
 	cancel        context.CancelFunc
 }

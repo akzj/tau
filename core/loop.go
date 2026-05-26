@@ -558,6 +558,11 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 	}
 	r.resultMu.Unlock()
 
+	// Track completion token usage
+	r.sess.TotalUsage.CompletionTokens += CountTokens(contentBuf.String())
+	r.sess.TotalUsage.TotalTokens = r.sess.TotalUsage.PromptTokens + r.sess.TotalUsage.CompletionTokens
+	r.sess.TotalUsage.CostUSD = EstimateCost(req.Model.Name, r.sess.TotalUsage.PromptTokens, r.sess.TotalUsage.CompletionTokens)
+
 	r.sess.EventBus.Emit(Event{Type: EvtTurnEnd, Payload: map[string]string{"reason": string(reason)}})
 	Logger().Debug("loop: turn end", "reason", reason)
 
