@@ -77,6 +77,24 @@ func main() {
 	sess.Tools.SetActive([]string{"echo"})
 	sess.Providers.RegisterProvider("default", prov)
 
+	// Register a read-file tool that will error on nonexistent files (for episodic memory demo)
+	sess.Tools.Register(core.Tool{
+		Name:        "read_file",
+		Description: "Read a file from the workspace. Returns an error if the file does not exist.",
+		Schema:      toolspec.EchoToolSchema{}, // reuse simple schema
+		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
+			var args struct{ Path string `json:"path"` }
+			raw, _ := json.Marshal(params)
+			json.Unmarshal(raw, &args)
+			if args.Path == "" {
+				args.Path = "/nonexistent/nope.txt"
+			}
+			// Always return error for nonexistent paths to trigger episodic memory
+			return core.ToolResult{}, fmt.Errorf("read %s: file not found", args.Path)
+		},
+	})
+	sess.Tools.SetActive([]string{"echo", "read_file"})
+
 	// Initialize memory system for demo
 	memDir, _ := os.MkdirTemp("", "tau-memory-demo-*")
 	defer os.RemoveAll(memDir)
@@ -88,9 +106,9 @@ func main() {
 
 	loop := core.NewLoop()
 
-	// --- Turn 1: user asks to use echo tool ---
-	fmt.Println("--- Turn 1: Prompt ---")
-	run1, err := loop.Prompt(ctx, sess, core.UserInput{Text: "Please use the echo tool with message 'hello tau'"})
+	// --- Turn 1: trigger an error for episodic memory ---
+	fmt.Println("--- Turn 1: Prompt (trigger error → episodic memory) ---")
+	run1, err := loop.Prompt(ctx, sess, core.UserInput{Text: "Read the file /nonexistent/nope.txt and tell me what it says"})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "prompt: %v\n", err)
 		os.Exit(1)
@@ -125,11 +143,21 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, "[memory] Stats — Working: %d obs, Episodic: %d episodes\n",
 			sess.Memory.Working.Len(), sess.Memory.Episodic.Len())
+
+		// Show episodic memory if error was recorded
+		if sess.Memory.Episodic.Len() > 0 {
+			fmt.Fprintf(os.Stderr, "\n[memory] Episodic: recorded error episode\n")
+			episodes := sess.Memory.RecallEpisodes("read", 1)
+			if len(episodes) > 0 {
+				fmt.Fprintf(os.Stderr, "[memory]   trigger: %s\n", episodes[0].Trigger)
+				fmt.Fprintf(os.Stderr, "[memory]   lesson: %s\n", episodes[0].Lesson)
+			}
+		}
 	}
 
-	// --- Turn 2: Continue (send tool results back to LLM) ---
+	// --- Turn 2: Continue (episodic recall should activate) ---
 	fmt.Println()
-	fmt.Println("--- Turn 2: Continue ---")
+	fmt.Println("--- Turn 2: Continue (episodic recall should activate) ---")
 	run2, err := loop.Continue(ctx, sess)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "continue: %v\n", err)
@@ -165,6 +193,15 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, "[memory] Stats — Working: %d obs, Episodic: %d episodes\n",
 			sess.Memory.Working.Len(), sess.Memory.Episodic.Len())
+
+		// Show episodic recall from turn 2
+		if sess.Memory.Episodic.Len() > 0 {
+			fmt.Fprintf(os.Stderr, "\n[memory] Episodic recall from turn 2:\n")
+			episodes := sess.Memory.RecallEpisodes("file not found", 5)
+			for _, ep := range episodes {
+				fmt.Fprintf(os.Stderr, "[memory]   lesson: %s\n", ep.Lesson)
+			}
+		}
 	}
 
 	fmt.Println()

@@ -473,6 +473,13 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 					}
 					if tr.err != nil {
 						r.events <- ErrorEvent{Timestamp_: timeNow(), Err: tr.err, Code: ErrTool}
+						// Memory: record tool error episode
+						if r.sess.Memory != nil {
+							r.sess.Memory.RecordEpisode(
+								tr.err.Error(), tr.toolName, "unresolved",
+								"error during tool execution", []string{"error", tr.toolName},
+							)
+						}
 					}
 					r.events <- ToolCallEnd{
 						Timestamp_: timeNow(),
