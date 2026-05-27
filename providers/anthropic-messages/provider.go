@@ -1,4 +1,5 @@
 //go:build !no_anthropic
+
 package anthropic_messages
 
 import (
@@ -11,19 +12,39 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/akzj/tau/core"
 )
 
+const (
+	anthropicMessagesURL = "https://api.anthropic.com/v1/messages"
+	anthropicVersion     = "2023-06-01"
+)
+
+// --- Provider type -----------------------------------------------------------
+
 // AnthropicMessagesProvider implements core.Provider for Anthropic Messages API.
 type AnthropicMessagesProvider struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	baseURL   string
+	apiKey    string
+	client    *http.Client
+	maxTokens int
+	// streamFn allows test injection of the HTTP round-trip.
+	streamFn func(ctx context.Context, req *http.Request) (*http.Response, error)
 }
 
-// NewAnthropicMessagesProvider creates a provider for Anthropic Messages wire.
-// Uses ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL env vars (same as OpenAI gateway).
+// New creates a provider with an explicit API key (used in tests).
+func New(apiKey string) *AnthropicMessagesProvider {
+	return &AnthropicMessagesProvider{
+		baseURL:   anthropicMessagesURL,
+		apiKey:    apiKey,
+		client:    &http.Client{Timeout: 120 * time.Second},
+		maxTokens: 4096,
+	}
+}
+
+// NewAnthropicMessagesProvider creates a provider from environment variables.
 func NewAnthropicMessagesProvider() (*AnthropicMessagesProvider, error) {
 	apiKey := os.Getenv("ANTHROPIC_AUTH_TOKEN")
 	if apiKey == "" {
@@ -34,61 +55,33 @@ func NewAnthropicMessagesProvider() (*AnthropicMessagesProvider, error) {
 		baseURL = "https://athenai.mihoyo.com"
 	}
 	return &AnthropicMessagesProvider{
-		baseURL: strings.TrimSuffix(baseURL, "/") + "/v1",
-		apiKey:  apiKey,
-		client:  &http.Client{},
+		baseURL:   strings.TrimSuffix(baseURL, "/") + "/v1",
+		apiKey:    apiKey,
+		client:    &http.Client{},
+		maxTokens: 4096,
 	}, nil
 }
 
-// Stream implements core.Provider.Stream.
-// Stream sends a Messages API request. API key is read from ANTHROPIC_AUTH_TOKEN env var per call.
-func (p *AnthropicMessagesProvider) Stream(ctx context.Context, req core.StreamRequest) (<-chan core.ProviderEvent, error) {
-	body := p.buildAnthropicBody(req, true)
-
-	if req.OnPayload != nil {
-		transformed, err := req.OnPayload(body)
-		if err != nil {
-			return nil, fmt.Errorf("OnPayload: %w", err)
-		}
-		var ok bool
-		body, ok = transformed.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("OnPayload: expected map[string]any, got %T", transformed)
-		}
+// newTestProvider creates a provider pointing at an httptest server.
+// Used by tests in this package.
+func newTestProvider(baseURL string, client *http.Client) *AnthropicMessagesProvider {
+	return &AnthropicMessagesProvider{
+		baseURL:   baseURL,
+		apiKey:    "test-key",
+		client:    client,
+		maxTokens: 100,
 	}
-
-	httpReq, err := p.newRequest(ctx, body)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
-	}
-
-	if req.OnResponse != nil {
-		req.OnResponse(resp.StatusCode, resp.Header)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, p.classifyError("anthropic.Stream", resp.StatusCode, bodyBytes)
-	}
-
-	events := make(chan core.ProviderEvent, 64)
-	go p.parseSSE(ctx, resp.Body, events)
-	return events, nil
 }
 
-// Complete implements core.Provider.Complete.
-// Complete sends a non-streaming Messages request. API key is read per call.
+// --- core.Provider implementation --------------------------------------------
+
+// Complete sends a non-streaming Messages API request.
 func (p *AnthropicMessagesProvider) Complete(ctx context.Context, req core.CompleteRequest) (core.CompleteResponse, error) {
-	body := p.buildAnthropicBody(core.StreamRequest{
+	body := p.buildRequest(core.StreamRequest{
+		Model:        req.Model,
 		Messages:     req.Messages,
 		SystemPrompt: req.SystemPrompt,
-		Model:        req.Model,
+		Options:      req.Options,
 	}, false)
 
 	httpReq, err := p.newRequest(ctx, body)
@@ -96,14 +89,18 @@ func (p *AnthropicMessagesProvider) Complete(ctx context.Context, req core.Compl
 		return core.CompleteResponse{}, err
 	}
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.doRequest(httpReq)
 	if err != nil {
-		return core.CompleteResponse{}, err
+		return core.CompleteResponse{}, fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return core.CompleteResponse{}, fmt.Errorf("read response: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return core.CompleteResponse{}, p.classifyError("anthropic.Complete", resp.StatusCode, bodyBytes)
 	}
 
@@ -117,7 +114,7 @@ func (p *AnthropicMessagesProvider) Complete(ctx context.Context, req core.Compl
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return core.CompleteResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -138,26 +135,91 @@ func (p *AnthropicMessagesProvider) Complete(ctx context.Context, req core.Compl
 	}, nil
 }
 
-// --- request building ---
+// Stream sends a streaming Messages API request.
+func (p *AnthropicMessagesProvider) Stream(ctx context.Context, req core.StreamRequest) (<-chan core.ProviderEvent, error) {
+	body := p.buildRequest(req, true)
 
-func (p *AnthropicMessagesProvider) buildAnthropicBody(req core.StreamRequest, stream bool) map[string]any {
+	// OnPayload transform hook (backward compat).
+	if req.OnPayload != nil {
+		transformed, err := req.OnPayload(body)
+		if err != nil {
+			return nil, fmt.Errorf("OnPayload: %w", err)
+		}
+		var ok bool
+		body, ok = transformed.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("OnPayload: expected map[string]any, got %T", transformed)
+		}
+	}
+
+	httpReq, err := p.newRequest(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.doRequest(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+
+	// OnResponse hook (backward compat).
+	if req.OnResponse != nil {
+		req.OnResponse(resp.StatusCode, resp.Header)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, p.classifyError("anthropic.Stream", resp.StatusCode, bodyBytes)
+	}
+
+	ch := make(chan core.ProviderEvent, 64)
+	go p.parseSSE(ctx, resp.Body, ch)
+	return ch, nil
+}
+
+// Compat returns wire-specific compatibility flags.
+func (p *AnthropicMessagesProvider) Compat() core.WireCompat {
+	return core.AnthropicMessagesCompat{
+		ThinkingFormat:        false,
+		SupportsCacheControl:  false,
+		MaxTokensField:        true,
+		SupportsStopSequences: true,
+		SupportsTopK:          false,
+		TemperatureField:      true,
+		SupportsToolChoice:    true,
+	}
+}
+
+// --- request building --------------------------------------------------------
+
+// buildRequest constructs the Anthropic Messages API request body.
+//
+// Requirements:
+//  1. Full POST /v1/messages body: model, max_tokens, messages, system, tools, tool_choice, stop_sequences, stream.
+//  3. Vision: image content blocks with base64 source.
+//  4. Tool Use: tools[] → input_schema format with tool_choice: {type: "auto"}.
+func (p *AnthropicMessagesProvider) buildRequest(req core.StreamRequest, stream bool) map[string]any {
 	body := map[string]any{
 		"model":      req.Model.Name,
-		"max_tokens": 4096,
+		"max_tokens": p.maxTokens,
 		"stream":     stream,
 	}
+
+	// Override max_tokens from options if provided.
 	if req.Options.MaxTokens > 0 {
 		body["max_tokens"] = req.Options.MaxTokens
 	}
-	// system is a top-level field, not a message
+
+	// System prompt as top-level field.
 	if req.SystemPrompt != "" {
 		body["system"] = req.SystemPrompt
 	}
 
-	// messages in Anthropic content-block format
-	body["messages"] = buildAnthropicMessages(req.Messages)
+	// Messages in Anthropic content-block format (including vision).
+	body["messages"] = convertMessages(req.Messages)
 
-	// tools in Anthropic format (input_schema instead of parameters)
+	// Tools in Anthropic input_schema format.
 	if len(req.Tools) > 0 {
 		var tools []map[string]any
 		for _, t := range req.Tools {
@@ -165,40 +227,82 @@ func (p *AnthropicMessagesProvider) buildAnthropicBody(req core.StreamRequest, s
 			if req.TransformToolName != nil {
 				name = req.TransformToolName(name)
 			}
-			tools = append(tools, map[string]any{
-				"name":         name,
-				"description":  t.Description,
-				"input_schema": t.Schema,
-			})
+			tool := map[string]any{
+				"name":        name,
+				"description": t.Description,
+			}
+			// Parse Schema to unwrap JSON if needed.
+			if t.Schema != nil {
+				tool["input_schema"] = t.Schema
+			}
+			tools = append(tools, tool)
 		}
 		body["tools"] = tools
+		body["tool_choice"] = map[string]string{"type": "auto"}
+	}
+
+	// Stop sequences.
+	if len(req.Options.Stop) > 0 {
+		body["stop_sequences"] = req.Options.Stop
 	}
 
 	return body
 }
 
+// newRequest creates an HTTP request with required Anthropic headers.
 func (p *AnthropicMessagesProvider) newRequest(ctx context.Context, body map[string]any) (*http.Request, error) {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.baseURL+"/messages", bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", p.apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	return httpReq, nil
 }
 
-// --- message building ---
+// doRequest performs the HTTP round-trip, using streamFn for test injection.
+func (p *AnthropicMessagesProvider) doRequest(req *http.Request) (*http.Response, error) {
+	if p.streamFn != nil {
+		return p.streamFn(req.Context(), req)
+	}
+	return p.client.Do(req)
+}
 
-func buildAnthropicMessages(messages []core.Message) []map[string]any {
+// --- message building (requirement 3: vision, requirement 4: tool use) --------
+
+// ContentBlock represents a single content block in an Anthropic message.
+type ContentBlock struct {
+	Type   string       `json:"type"`
+	Text   string       `json:"text,omitempty"`
+	Source *ImageSource `json:"source,omitempty"`
+}
+
+// ImageSource is the base64 image source for vision content blocks.
+type ImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+// convertMessages converts core.Message slice to Anthropic Messages format.
+//
+// Supports:
+//   - Plain text messages
+//   - Vision content blocks (JSON-encoded in Content field)
+//   - Assistant tool_use messages
+//   - Tool result messages
+func convertMessages(messages []core.Message) []map[string]any {
 	var msgs []map[string]any
 	for _, m := range messages {
-		// Skip system messages — system prompt is a top-level field
+		// System messages are handled via top-level "system" field.
 		if m.Role == core.RoleSystem {
 			continue
 		}
@@ -207,6 +311,7 @@ func buildAnthropicMessages(messages []core.Message) []map[string]any {
 
 		switch {
 		case m.Role == core.RoleAssistant && len(m.ToolCalls) > 0:
+			// Assistant message with tool_use blocks.
 			var content []map[string]any
 			if m.Content != "" {
 				content = append(content, map[string]any{
@@ -232,17 +337,23 @@ func buildAnthropicMessages(messages []core.Message) []map[string]any {
 			msg["content"] = content
 
 		case m.Role == core.RoleTool:
+			// Tool result → user message with tool_result content block.
 			msg = map[string]any{
 				"role": "user",
 				"content": []map[string]any{{
-					"type":        "tool_result",
-					"tool_use_id": m.ToolCallID,
-					"content":     m.Content,
+					"type":         "tool_result",
+					"tool_use_id":  m.ToolCallID,
+					"content":      m.Content,
 				}},
 			}
 
 		default:
-			msg["content"] = m.Content
+			// Check for structured content blocks (vision support via JSON encoding).
+			if blocks := parseContentBlocks(m.Content); blocks != nil {
+				msg["content"] = blocks
+			} else {
+				msg["content"] = m.Content
+			}
 		}
 
 		msgs = append(msgs, msg)
@@ -250,16 +361,40 @@ func buildAnthropicMessages(messages []core.Message) []map[string]any {
 	return msgs
 }
 
-// --- SSE parsing ---
-
-// anthropicEvent is a single SSE event line + data line.
-type anthropicSSEEvent struct {
-	eventType string
-	data      string
+// parseContentBlocks attempts to parse s as a JSON array of ContentBlock.
+// Returns nil if parsing fails — caller should treat s as plain text.
+func parseContentBlocks(s string) []map[string]any {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "[") {
+		return nil
+	}
+	var blocks []ContentBlock
+	if err := json.Unmarshal([]byte(s), &blocks); err != nil {
+		return nil
+	}
+	// Convert to map[string]any for message building.
+	var out []map[string]any
+	for _, b := range blocks {
+		m := map[string]any{"type": b.Type}
+		if b.Text != "" {
+			m["text"] = b.Text
+		}
+		if b.Source != nil {
+			m["source"] = map[string]any{
+				"type":       b.Source.Type,
+				"media_type": b.Source.MediaType,
+				"data":       b.Source.Data,
+			}
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
-// anthropicData is the JSON payload of an SSE event.
-type anthropicData struct {
+// --- SSE parsing (requirement 2: streaming) ----------------------------------
+
+// anthropicSSEData is the JSON payload of an SSE event.
+type anthropicSSEData struct {
 	Type    string `json:"type"`
 	Message struct {
 		ID    string `json:"id"`
@@ -286,17 +421,18 @@ type anthropicData struct {
 	} `json:"usage"`
 }
 
-func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCloser, events chan<- core.ProviderEvent) {
-	defer close(events)
+// parseSSE reads Anthropic SSE streaming responses and emits ProviderEvents.
+func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCloser, ch chan<- core.ProviderEvent) {
 	defer body.Close()
+	defer close(ch)
 
 	scanner := bufio.NewScanner(body)
 	var (
-		msgID          string
-		currentEvent   string
-		dataLines      []string
-		indexToToolID  = make(map[int]string)
-		indexToThinking = make(map[int]bool)
+		msgID            string
+		currentEvent     string
+		dataLines        []string
+		indexToToolID    = make(map[int]string)
+		indexToThinking  = make(map[int]bool)
 	)
 
 	flush := func() {
@@ -304,9 +440,9 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 			return
 		}
 		data := strings.Join(dataLines, "")
-		var ad anthropicData
+		var ad anthropicSSEData
 		if err := json.Unmarshal([]byte(data), &ad); err != nil {
-			events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("parse sse: %w", err)}
+			ch <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("parse sse: %w", err)}
 			currentEvent = ""
 			dataLines = nil
 			return
@@ -315,7 +451,7 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 		switch currentEvent {
 		case "message_start":
 			msgID = ad.Message.ID
-			events <- core.ProviderEvent{Type: core.ProvMessageStart, MessageID: msgID}
+			ch <- core.ProviderEvent{Type: core.ProvMessageStart, MessageID: msgID}
 
 		case "content_block_start":
 			switch ad.ContentBlock.Type {
@@ -324,38 +460,38 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 			case "tool_use":
 				toolCallID := ad.ContentBlock.ID
 				indexToToolID[ad.Index] = toolCallID
-				events <- core.ProviderEvent{
-					Type:      core.ProvToolCallStart,
-					MessageID: msgID,
+				ch <- core.ProviderEvent{
+					Type:       core.ProvToolCallStart,
+					MessageID:  msgID,
 					ToolCallID: toolCallID,
 					ToolName:   ad.ContentBlock.Name,
 				}
 			}
-			// text content_block_start: ignore (text is empty)
+			// text content_block_start: no event needed, deltas follow
 
 		case "content_block_delta":
 			switch ad.Delta.Type {
 			case "thinking_delta":
-				events <- core.ProviderEvent{
+				ch <- core.ProviderEvent{
 					Type:         core.ProvThinkingDelta,
 					MessageID:    msgID,
 					ContentDelta: ad.Delta.Thinking,
 				}
 			case "redacted_thinking":
-				events <- core.ProviderEvent{
+				ch <- core.ProviderEvent{
 					Type:         core.ProvThinkingDelta,
 					MessageID:    msgID,
 					ContentDelta: "[redacted]",
 				}
 			case "text_delta":
-				events <- core.ProviderEvent{
+				ch <- core.ProviderEvent{
 					Type:         core.ProvContentDelta,
 					MessageID:    msgID,
 					ContentDelta: ad.Delta.Text,
 				}
 			case "input_json_delta":
 				toolCallID := indexToToolID[ad.Index]
-				events <- core.ProviderEvent{
+				ch <- core.ProviderEvent{
 					Type:          core.ProvToolCallDelta,
 					MessageID:     msgID,
 					ToolCallID:    toolCallID,
@@ -364,17 +500,15 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 			}
 
 		case "content_block_stop":
-			// Emit ProvToolCallEnd for tool_use blocks at this index
 			if id, ok := indexToToolID[ad.Index]; ok {
-				events <- core.ProviderEvent{
+				ch <- core.ProviderEvent{
 					Type:       core.ProvToolCallEnd,
 					MessageID:  msgID,
 					ToolCallID: id,
 				}
 			}
-			// Emit ProvThinkingEnd for thinking blocks at this index
 			if indexToThinking[ad.Index] {
-				events <- core.ProviderEvent{
+				ch <- core.ProviderEvent{
 					Type:      core.ProvThinkingEnd,
 					MessageID: msgID,
 				}
@@ -382,11 +516,20 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 			}
 
 		case "message_delta":
-			// Emit ProvMessageEnd before message_stop
-			events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
+			// Emit usage if present (requirement 5: token counting).
+			if ad.Usage.InputTokens > 0 || ad.Usage.OutputTokens > 0 {
+				ch <- core.ProviderEvent{
+					Type: core.ProvUsage,
+					Usage: &core.Usage{
+						PromptTokens:     ad.Usage.InputTokens,
+						CompletionTokens: ad.Usage.OutputTokens,
+						TotalTokens:      ad.Usage.InputTokens + ad.Usage.OutputTokens,
+					},
+				}
+			}
 
 		case "message_stop":
-			// Stream complete — nothing extra needed
+			ch <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
 		}
 
 		currentEvent = ""
@@ -403,25 +546,29 @@ func (p *AnthropicMessagesProvider) parseSSE(ctx context.Context, body io.ReadCl
 		line := scanner.Text()
 
 		if strings.HasPrefix(line, "event: ") {
-			// Flush previous event if any
 			flush()
 			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event: "))
 		} else if strings.HasPrefix(line, "data: ") {
 			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
 		}
-		// Empty lines or comment lines are ignored
 	}
 
 	if err := scanner.Err(); err != nil {
-		events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
+		ch <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
 	}
-	// Flush final event
 	flush()
 }
 
-// --- error classification ---
+// --- error classification (requirement 6) ------------------------------------
 
-// classifyError returns a structured core.Error for the given HTTP status code and body.
+// classifyError returns a structured core.Error based on HTTP status code.
+//
+// Classification:
+//   - 429 → Transient (rate limited)
+//   - 400 → UsageError (bad request)
+//   - 401/403 → Permanent (auth)
+//   - 5xx → Transient (server error)
+//   - default → Permanent
 func (p *AnthropicMessagesProvider) classifyError(op string, statusCode int, body []byte) error {
 	var errResp struct {
 		Error struct {
@@ -438,30 +585,13 @@ func (p *AnthropicMessagesProvider) classifyError(op string, statusCode int, bod
 	switch {
 	case statusCode == 429:
 		return core.Transient(op, fmt.Errorf("rate limited (429): %s", msg))
-	case statusCode >= 500:
-		return core.Transient(op, fmt.Errorf("server error (%d): %s", statusCode, msg))
+	case statusCode == 400:
+		return core.UsageError(op, fmt.Errorf("bad request (400): %s", msg))
 	case statusCode == 401 || statusCode == 403:
 		return core.Permanent(op, fmt.Errorf("auth error (%d): %s", statusCode, msg))
-	case statusCode == 400:
-		return core.UsageError(op, fmt.Errorf("bad request (%d): %s", statusCode, msg))
+	case statusCode >= 500:
+		return core.Transient(op, fmt.Errorf("server error (%d): %s", statusCode, msg))
 	default:
 		return core.Permanent(op, fmt.Errorf("API error %d: %s", statusCode, msg))
-	}
-}
-
-// --- compat ---
-
-// Note: compat types are defined in core/provider.go as sealed WireCompat impls.
-
-// Compat returns the wire-specific compatibility flags for this provider.
-func (p *AnthropicMessagesProvider) Compat() core.WireCompat {
-	return core.AnthropicMessagesCompat{
-		ThinkingFormat:        false,
-		SupportsCacheControl:  false,
-		MaxTokensField:        true,
-		SupportsStopSequences: true,
-		SupportsTopK:          false,
-		TemperatureField:      true,
-		SupportsToolChoice:    true,
 	}
 }

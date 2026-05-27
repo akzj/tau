@@ -1,4 +1,5 @@
 //go:build !no_google
+
 package google_genai
 
 import (
@@ -16,111 +17,86 @@ import (
 	"github.com/akzj/tau/core"
 )
 
-// Provider implements core.Provider for Google Generative AI (Gemini) API.
-// Uses the Mihoyo gateway at ANTHROPIC_BASE_URL/v1beta/models/{model}:...
+const genaiBaseURL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+// Provider implements core.Provider for the Google Generative AI (Gemini) API.
+//
+// Requirements:
+//  1. Full POST /v1beta/models/{model}:generateContent + :streamGenerateContent?alt=sse.
+//  2. SSE streaming via data: {...} → core.ProviderEvent channel (delta-computed from accumulated text).
+//  3. Vision: inlineData content blocks with base64 data.
+//  4. Function calling: functionDeclarations → functionCall in response.
+//  5. Token usage: usageMetadata{} parsed from complete + streaming.
+//  6. Error classification: 429→Transient, 400→Usage, 401/403→Permanent, 500+→Transient.
+//  7. Backward compat: Compat() string, CountTokens(), OnPayload/OnResponse hooks.
 type Provider struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	baseURL   string
+	apiKey    string
+	client    *http.Client
+	maxTokens int
 }
 
-// NewProvider creates a Google GenAI provider using env vars:
-//
-//	ANTHROPIC_BASE_URL (default: https://athenai.mihoyo.com)
-//	ANTHROPIC_AUTH_TOKEN (required)
-func NewProvider() (*Provider, error) {
-	apiKey := os.Getenv("ANTHROPIC_AUTH_TOKEN")
-	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_AUTH_TOKEN not set")
+// New creates a provider with an explicit API key (used in tests).
+func New(apiKey string) *Provider {
+	return &Provider{
+		baseURL:   genaiBaseURL,
+		apiKey:    apiKey,
+		client:    &http.Client{Timeout: 120 * time.Second},
+		maxTokens: 4096,
 	}
-	baseURL := os.Getenv("ANTHROPIC_BASE_URL")
+}
+
+// NewProvider creates a provider from environment variables (backward compat).
+func NewProvider() (*Provider, error) { return NewGoogleGenAIProvider() }
+
+// NewGoogleGenAIProvider creates a provider from environment variables.
+func NewGoogleGenAIProvider() (*Provider, error) {
+	apiKey := os.Getenv("GOOGLE_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("GOOGLE_API_KEY not set")
+	}
+	baseURL := os.Getenv("GOOGLE_GENAI_BASE_URL")
 	if baseURL == "" {
-		baseURL = "https://athenai.mihoyo.com"
+		baseURL = genaiBaseURL
 	}
 	return &Provider{
-		baseURL: strings.TrimSuffix(baseURL, "/") + "/v1beta",
-		apiKey:  apiKey,
-		client:  &http.Client{},
+		baseURL:   baseURL,
+		apiKey:    apiKey,
+		client:    &http.Client{Timeout: 120 * time.Second},
+		maxTokens: 4096,
 	}, nil
 }
 
-// Stream implements core.Provider.Stream via SSE streamGenerateContent.
-// Stream sends a generateContent request. API key is read from ANTHROPIC_AUTH_TOKEN env var per call.
-func (p *Provider) Stream(ctx context.Context, req core.StreamRequest) (<-chan core.ProviderEvent, error) {
-	body := p.buildStreamBody(req)
+// --- core.Provider implementation --------------------------------------------
 
-	if req.OnPayload != nil {
-		transformed, err := req.OnPayload(body)
-		if err != nil {
-			return nil, fmt.Errorf("OnPayload: %w", err)
-		}
-		var ok bool
-		body, ok = transformed.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("OnPayload: expected map[string]any, got %T", transformed)
-		}
-	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse", p.baseURL, req.Model.Name)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-goog-api-key", p.apiKey)
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
-	}
-
-	if req.OnResponse != nil {
-		req.OnResponse(resp.StatusCode, resp.Header)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, classifyHTTPError(resp.StatusCode, bodyBytes)
-	}
-
-	events := make(chan core.ProviderEvent, 64)
-	go p.parseSSE(ctx, resp.Body, events)
-	return events, nil
-}
-
-// Complete implements core.Provider.Complete via non-streaming generateContent.
-// Complete sends a non-streaming generateContent request. API key is read per call.
+// Complete sends a non-streaming generateContent request.
 func (p *Provider) Complete(ctx context.Context, req core.CompleteRequest) (core.CompleteResponse, error) {
-	body := p.buildCompleteBody(req)
+	body := p.buildRequest(core.StreamRequest{
+		Model:        req.Model,
+		Messages:     req.Messages,
+		SystemPrompt: req.SystemPrompt,
+		Options:      req.Options,
+	})
 
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return core.CompleteResponse{}, fmt.Errorf("marshal request: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/models/%s:generateContent", p.baseURL, req.Model.Name)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return core.CompleteResponse{}, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-goog-api-key", p.apiKey)
-
-	resp, err := p.client.Do(httpReq)
+	url := fmt.Sprintf("%s/%s:generateContent", p.baseURL, req.Model.Name)
+	httpReq, err := p.newRequest(ctx, url, body)
 	if err != nil {
 		return core.CompleteResponse{}, err
 	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return core.CompleteResponse{}, fmt.Errorf("http request: %w", err)
+	}
 	defer resp.Body.Close()
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return core.CompleteResponse{}, fmt.Errorf("read response: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return core.CompleteResponse{}, classifyHTTPError(resp.StatusCode, bodyBytes)
+		return core.CompleteResponse{}, p.classifyError("genai.Complete", resp.StatusCode, bodyBytes)
 	}
 
 	var result struct {
@@ -137,11 +113,11 @@ func (p *Provider) Complete(ctx context.Context, req core.CompleteRequest) (core
 			TotalTokenCount      int `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return core.CompleteResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 
-	content := ""
+	var content string
 	if len(result.Candidates) > 0 {
 		for _, part := range result.Candidates[0].Content.Parts {
 			content += part.Text
@@ -158,81 +134,150 @@ func (p *Provider) Complete(ctx context.Context, req core.CompleteRequest) (core
 	}, nil
 }
 
-// --- request body builders ---
+// Stream sends a streaming generateContent request (SSE).
+func (p *Provider) Stream(ctx context.Context, req core.StreamRequest) (<-chan core.ProviderEvent, error) {
+	body := p.buildRequest(req)
 
-func (p *Provider) buildStreamBody(req core.StreamRequest) map[string]any {
+	// OnPayload transform hook (backward compat).
+	if req.OnPayload != nil {
+		transformed, err := req.OnPayload(body)
+		if err != nil {
+			return nil, fmt.Errorf("OnPayload: %w", err)
+		}
+		var ok bool
+		body, ok = transformed.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("OnPayload: expected map[string]any, got %T", transformed)
+		}
+	}
+
+	url := fmt.Sprintf("%s/%s:streamGenerateContent?alt=sse", p.baseURL, req.Model.Name)
+	httpReq, err := p.newRequest(ctx, url, body)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+
+	// OnResponse hook (backward compat).
+	if req.OnResponse != nil {
+		req.OnResponse(resp.StatusCode, resp.Header)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, p.classifyError("genai.Stream", resp.StatusCode, bodyBytes)
+	}
+
+	ch := make(chan core.ProviderEvent, 64)
+	go p.parseSSE(ctx, resp.Body, ch)
+	return ch, nil
+}
+
+// CountTokens estimates the number of tokens in a text.
+func (p *Provider) CountTokens(text string) int {
+	return len(text) / 4
+}
+
+// Compat returns the provider identifier string.
+func (p *Provider) Compat() string {
+	return "google-genai"
+}
+
+// --- Request building --------------------------------------------------------
+
+// buildRequest constructs the Gemini API request body.
+//
+// Requirements:
+//  1. Full POST body: contents, systemInstruction, tools, toolConfig, generationConfig.
+//  3. Vision: inlineData parts converted from content blocks.
+//  4. Tool calls: functionDeclarations[] with functionCallingConfig mode=AUTO.
+func (p *Provider) buildRequest(req core.StreamRequest) map[string]any {
 	body := map[string]any{
-		"contents": buildContents(req.Messages),
-		"generationConfig": map[string]any{
-			"maxOutputTokens": 4096,
-		},
+		"contents": convertContents(req.Messages),
 	}
-	if req.Options.Temperature > 0 {
-		body["generationConfig"].(map[string]any)["temperature"] = req.Options.Temperature
-	}
-	if req.Options.MaxTokens > 0 {
-		body["generationConfig"].(map[string]any)["maxOutputTokens"] = req.Options.MaxTokens
-	}
+
 	if req.SystemPrompt != "" {
 		body["systemInstruction"] = map[string]any{
 			"parts": []map[string]any{{"text": req.SystemPrompt}},
 		}
 	}
+
 	if len(req.Tools) > 0 {
-		body["tools"] = buildToolDeclarations(req.Tools, req.TransformToolName)
+		body["tools"] = convertTools(req.Tools, req.TransformToolName)
+		body["toolConfig"] = map[string]any{
+			"functionCallingConfig": map[string]string{"mode": "AUTO"},
+		}
 	}
-	return body
-}
 
-func (p *Provider) buildCompleteBody(req core.CompleteRequest) map[string]any {
-	body := map[string]any{
-		"contents": buildContents(req.Messages),
-		"generationConfig": map[string]any{
-			"maxOutputTokens": 4096,
-		},
+	genConfig := map[string]any{}
+	if req.Options.MaxTokens > 0 {
+		genConfig["maxOutputTokens"] = req.Options.MaxTokens
+	} else {
+		genConfig["maxOutputTokens"] = p.maxTokens
 	}
 	if req.Options.Temperature > 0 {
-		body["generationConfig"].(map[string]any)["temperature"] = req.Options.Temperature
+		genConfig["temperature"] = req.Options.Temperature
 	}
-	if req.Options.MaxTokens > 0 {
-		body["generationConfig"].(map[string]any)["maxOutputTokens"] = req.Options.MaxTokens
+	if req.Options.TopP > 0 {
+		genConfig["topP"] = req.Options.TopP
 	}
-	if req.SystemPrompt != "" {
-		body["systemInstruction"] = map[string]any{
-			"parts": []map[string]any{{"text": req.SystemPrompt}},
-		}
+	if len(req.Options.Stop) > 0 {
+		genConfig["stopSequences"] = req.Options.Stop
 	}
+	if len(genConfig) > 0 {
+		body["generationConfig"] = genConfig
+	}
+
 	return body
 }
 
-func buildToolDeclarations(tools []core.ToolSpec, transform func(string) string) []map[string]any {
-	var fns []map[string]any
-	for _, t := range tools {
-		name := t.Name
-		if transform != nil {
-			name = transform(name)
-		}
-		fns = append(fns, map[string]any{
-			"name":        name,
-			"description": t.Description,
-			"parameters":  t.Schema,
-		})
+// newRequest creates an HTTP request with required headers.
+func (p *Provider) newRequest(ctx context.Context, url string, body map[string]any) (*http.Request, error) {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	return []map[string]any{{"functionDeclarations": fns}}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", p.apiKey)
+	return httpReq, nil
 }
 
-// buildContents converts tau Messages into Gemini contents array.
-// Role mapping: core.RoleUser→"user", core.RoleAssistant→"model", core.RoleTool→"function".
-// System messages are skipped (handled via systemInstruction).
+// --- Message conversion (requirement 3: vision) ------------------------------
+
+// contentBlock is the parsed JSON content block for vision/data messages.
+type contentBlock struct {
+	Type   string       `json:"type"`
+	Text   string       `json:"text,omitempty"`
+	Source *imageSource `json:"source,omitempty"`
+}
+
+// imageSource is the base64 image source for vision content blocks.
+type imageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+// convertContents converts core.Message slice to Gemini contents array.
 //
-// Note: Gemini supports multimodal image inputs via inlineData parts:
-//
-//	{"inlineData": {"mimeType": "image/png", "data": "<base64>"}}
-//
-// This is not yet plumbed through tau's Message struct; when tau adds
-// an Attachment/ContentPart model, wire inlineData parts here.
-func buildContents(msgs []core.Message) []map[string]any {
-	// First pass: build a map of callID → toolName for functionResponse matching.
+// Supports:
+//   - Plain text messages
+//   - Vision content blocks (Anthropic-style JSON → Gemini inlineData format)
+//   - Assistant functionCall parts
+//   - Tool result functionResponse parts
+func convertContents(msgs []core.Message) []map[string]any {
+	// Build lookup of callID → toolName for functionResponse matching.
 	callName := make(map[string]string)
 	for _, m := range msgs {
 		for _, tc := range m.ToolCalls {
@@ -240,13 +285,14 @@ func buildContents(msgs []core.Message) []map[string]any {
 		}
 	}
 
-	var contents []map[string]any
+	var out []map[string]any
 	for _, m := range msgs {
+		// System messages are handled via systemInstruction.
 		if m.Role == core.RoleSystem {
 			continue
 		}
 
-		role := string(m.Role)
+		role := "user"
 		switch m.Role {
 		case core.RoleAssistant:
 			role = "model"
@@ -256,12 +302,14 @@ func buildContents(msgs []core.Message) []map[string]any {
 
 		var parts []map[string]any
 
-		// Assistant text content (omit if empty or if tool calls present without text)
-		if m.Content != "" && m.Role != core.RoleTool {
+		// Check for vision content blocks (JSON-encoded in Content field).
+		if blocks := parseContentBlocks(m.Content); blocks != nil {
+			parts = blocks
+		} else if m.Content != "" && m.Role != core.RoleTool {
 			parts = append(parts, map[string]any{"text": m.Content})
 		}
 
-		// Tool calls from assistant
+		// Tool calls from assistant → functionCall parts.
 		for _, tc := range m.ToolCalls {
 			var args map[string]any
 			if tc.Args != "" {
@@ -278,7 +326,7 @@ func buildContents(msgs []core.Message) []map[string]any {
 			})
 		}
 
-		// Tool result (function role)
+		// Tool result → functionResponse part.
 		if m.Role == core.RoleTool {
 			fnName := callName[m.ToolCallID]
 			if fnName == "" {
@@ -293,29 +341,69 @@ func buildContents(msgs []core.Message) []map[string]any {
 		}
 
 		if len(parts) > 0 {
-			contents = append(contents, map[string]any{"role": role, "parts": parts})
+			out = append(out, map[string]any{"role": role, "parts": parts})
 		}
 	}
-	return contents
+	return out
 }
 
-// classifyHTTPError returns a descriptive error based on HTTP status code.
-func classifyHTTPError(statusCode int, body []byte) error {
-	msg := string(body)
-	switch {
-	case statusCode == 429 || statusCode >= 500:
-		return core.Transient("genai.Stream", fmt.Errorf("%d: %s", statusCode, msg))
-	case statusCode == 401 || statusCode == 403:
-		return core.Permanent("genai.Stream", fmt.Errorf("auth: %d: %s", statusCode, msg))
-	default:
-		return core.Permanent("genai.Stream", fmt.Errorf("%d: %s", statusCode, msg))
+// parseContentBlocks attempts to parse s as a JSON array of contentBlock.
+// Converts Anthropic-style image blocks to Gemini inlineData format.
+// Returns nil if parsing fails — caller should treat s as plain text.
+func parseContentBlocks(s string) []map[string]any {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "[") {
+		return nil
 	}
+
+	var blocks []contentBlock
+	if err := json.Unmarshal([]byte(s), &blocks); err != nil {
+		return nil
+	}
+
+	var out []map[string]any
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			out = append(out, map[string]any{"text": b.Text})
+		case "image":
+			if b.Source != nil {
+				out = append(out, map[string]any{
+					"inlineData": map[string]string{
+						"mimeType": b.Source.MediaType,
+						"data":     b.Source.Data,
+					},
+				})
+			}
+		}
+	}
+	return out
 }
 
-// --- SSE parsing ---
+// --- Tool conversion (requirement 4: function calling) -----------------------
 
-// geminiChunk is a single SSE data line from Gemini streamGenerateContent.
-type geminiChunk struct {
+// convertTools converts core.ToolSpec slice to Gemini functionDeclarations format.
+func convertTools(tools []core.ToolSpec, transform func(string) string) []map[string]any {
+	var funcDecls []map[string]any
+	for _, t := range tools {
+		name := t.Name
+		if transform != nil {
+			name = transform(name)
+		}
+		funcDecls = append(funcDecls, map[string]any{
+			"name":        name,
+			"description": t.Description,
+			"parameters":  t.Schema,
+		})
+	}
+	return []map[string]any{{"functionDeclarations": funcDecls}}
+}
+
+// --- SSE parsing (requirement 2: streaming, requirement 5: token usage) ------
+
+// genaiSSEChunk is a single SSE data line from Gemini streamGenerateContent.
+// Google GenAI returns complete response objects (not deltas) — text accumulates.
+type genaiSSEChunk struct {
 	Candidates []struct {
 		Content struct {
 			Role  string `json:"role"`
@@ -329,15 +417,27 @@ type geminiChunk struct {
 		} `json:"content"`
 		FinishReason string `json:"finishReason"`
 	} `json:"candidates"`
+	UsageMetadata *struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
 }
 
-func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan<- core.ProviderEvent) {
-	defer close(events)
+// parseSSE reads Gemini SSE streaming responses and emits ProviderEvents.
+// Google GenAI returns accumulated text in each chunk, so we compute deltas.
+func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, ch chan<- core.ProviderEvent) {
 	defer body.Close()
+	defer close(ch)
 
 	scanner := bufio.NewScanner(body)
-	msgID := fmt.Sprintf("gemini-%d", time.Now().UnixNano())
-	events <- core.ProviderEvent{Type: core.ProvMessageStart, MessageID: msgID}
+	msgID := fmt.Sprintf("genai-%d", time.Now().UnixNano())
+
+	var (
+		started    bool
+		finished   bool
+		prevText   string
+	)
 
 	for scanner.Scan() {
 		select {
@@ -352,48 +452,131 @@ func (p *Provider) parseSSE(ctx context.Context, body io.ReadCloser, events chan
 		}
 		data := strings.TrimPrefix(line, "data: ")
 
-		var chunk geminiChunk
+		var chunk genaiSSEChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE json: %w", err)}
+			ch <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE parse: %w", err)}
 			continue
 		}
 
-		for _, c := range chunk.Candidates {
-			for _, part := range c.Content.Parts {
+		// Emit message start on first chunk.
+		if !started {
+			started = true
+			ch <- core.ProviderEvent{Type: core.ProvMessageStart, MessageID: msgID}
+		}
+
+		// Usage metadata (requirement 5: token usage in streaming).
+		if chunk.UsageMetadata != nil {
+			ch <- core.ProviderEvent{
+				Type: core.ProvUsage,
+				Usage: &core.Usage{
+					PromptTokens:     chunk.UsageMetadata.PromptTokenCount,
+					CompletionTokens: chunk.UsageMetadata.CandidatesTokenCount,
+					TotalTokens:      chunk.UsageMetadata.TotalTokenCount,
+				},
+			}
+		}
+
+		for _, cand := range chunk.Candidates {
+			for _, part := range cand.Content.Parts {
+				// Text delta: compute from accumulated text.
 				if part.Text != "" {
-					events <- core.ProviderEvent{
-						Type:         core.ProvContentDelta,
-						MessageID:    msgID,
-						ContentDelta: part.Text,
+					if strings.HasPrefix(part.Text, prevText) {
+						delta := part.Text[len(prevText):]
+						prevText = part.Text
+						if delta != "" {
+							ch <- core.ProviderEvent{
+								Type:         core.ProvContentDelta,
+								MessageID:    msgID,
+								ContentDelta: delta,
+							}
+						}
+					} else {
+						// Non-contiguous text — emit the full text as delta.
+						ch <- core.ProviderEvent{
+							Type:         core.ProvContentDelta,
+							MessageID:    msgID,
+							ContentDelta: part.Text,
+						}
+						prevText = part.Text
 					}
 				}
+
+				// Function call: complete in one part.
 				if part.FunctionCall != nil {
 					callID := fmt.Sprintf("fc-%d", time.Now().UnixNano())
-					events <- core.ProviderEvent{
+					ch <- core.ProviderEvent{
 						Type:       core.ProvToolCallStart,
 						MessageID:  msgID,
 						ToolCallID: callID,
 						ToolName:   part.FunctionCall.Name,
 					}
 					argsJSON, _ := json.Marshal(part.FunctionCall.Args)
-					events <- core.ProviderEvent{
+					ch <- core.ProviderEvent{
 						Type:          core.ProvToolCallDelta,
 						MessageID:     msgID,
 						ToolCallID:    callID,
 						ToolArgsDelta: string(argsJSON),
 					}
-					events <- core.ProviderEvent{
+					ch <- core.ProviderEvent{
 						Type:       core.ProvToolCallEnd,
 						MessageID:  msgID,
 						ToolCallID: callID,
 					}
 				}
 			}
+
+			// Finish reason.
+			if cand.FinishReason == "STOP" && !finished {
+				finished = true
+				ch <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
+			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		events <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
+		ch <- core.ProviderEvent{Type: core.ProvError, Err: fmt.Errorf("SSE scan: %w", err)}
 	}
-	events <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
+
+	// Ensure message end is emitted if not already done.
+	if !finished && started {
+		ch <- core.ProviderEvent{Type: core.ProvMessageEnd, MessageID: msgID}
+	}
+}
+
+// --- Error classification (requirement 6) ------------------------------------
+
+// classifyError returns a structured core.Error based on HTTP status code.
+//
+// Classification:
+//   - 429 → Transient (rate limited)
+//   - 400 → UsageError (bad request)
+//   - 401/403 → Permanent (auth)
+//   - 5xx → Transient (server error)
+//   - default → Permanent
+func (p *Provider) classifyError(op string, statusCode int, body []byte) error {
+	var errResp struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+		} `json:"error"`
+	}
+	json.Unmarshal(body, &errResp)
+	msg := errResp.Error.Message
+	if msg == "" {
+		msg = string(body)
+	}
+
+	switch {
+	case statusCode == 429:
+		return core.Transient(op, fmt.Errorf("rate limited (429): %s", msg))
+	case statusCode == 400:
+		return core.UsageError(op, fmt.Errorf("bad request (400): %s", msg))
+	case statusCode == 401 || statusCode == 403:
+		return core.Permanent(op, fmt.Errorf("auth error (%d): %s", statusCode, msg))
+	case statusCode >= 500:
+		return core.Transient(op, fmt.Errorf("server error (%d): %s", statusCode, msg))
+	default:
+		return core.Permanent(op, fmt.Errorf("API error %d: %s", statusCode, msg))
+	}
 }

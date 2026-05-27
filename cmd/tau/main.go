@@ -17,6 +17,7 @@ import (
 	"github.com/akzj/tau/pkg/coding/tools"
 	"github.com/akzj/tau/pkg/tui"
 	"github.com/akzj/tau/pkg/webui"
+	"github.com/akzj/tau/server"
 	"github.com/akzj/tau/pkg/persist"
 	"github.com/akzj/tau/pkg/provider"
 )
@@ -205,7 +206,7 @@ func main() {
 
 	// --list-tools: print available tools and exit
 	if *listTools {
-		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag", "list_files", "search_code", "run_tests", "git_diff", "ask_user", "lint", "format", "deps", "coverage", "rag_search"}
+		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag", "list_files", "search_code", "run_tests", "git_diff", "ask_user", "lint", "format", "deps", "coverage", "rag_search", "prompt_render", "verify", "browse", "git_commit", "git_log", "git_branch"}
 		fmt.Println("Available tools:")
 		for _, t := range toolNames {
 			fmt.Printf("  %s\n", t)
@@ -353,6 +354,48 @@ func main() {
 		api = core.WireGoogleGenerativeAI
 	default:
 		api = core.WireOpenAICompletions
+	}
+
+	// serve subcommand
+	if flag.NArg() > 0 && flag.Arg(0) == "serve" {
+		port := "8080"
+		host := "localhost"
+		apiKey := ""
+		args := flag.Args()[1:]
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--port":
+				if i+1 < len(args) {
+					i++
+					port = args[i]
+				}
+			case "--host":
+				if i+1 < len(args) {
+					i++
+					host = args[i]
+				}
+			case "--api-key":
+				if i+1 < len(args) {
+					i++
+					apiKey = args[i]
+				}
+			}
+		}
+
+		srv := server.New(server.Options{
+			Port:      port,
+			Host:      host,
+			APIKey:    apiKey,
+			Workspace: wsRoot,
+			Provider:  prov,
+			Model:     *model,
+			WireAPI:   api,
+		})
+		if err := srv.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	// System prompt

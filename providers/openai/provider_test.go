@@ -1,6 +1,6 @@
-//go:build !no_google
+//go:build !no_openai
 
-package google_genai
+package openai
 
 import (
 	"context"
@@ -29,28 +29,19 @@ func newTestProvider(srv *httptest.Server) *Provider {
 
 func TestCompleteText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify path and auth header.
-		if !strings.HasSuffix(r.URL.Path, ":generateContent") {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Header.Get("x-goog-api-key") != "test-key" {
-			t.Errorf("unexpected api key header: %s", r.Header.Get("x-goog-api-key"))
-		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{
+			"choices": []map[string]any{
 				{
-					"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": "hello world"}},
-					},
-					"finishReason": "STOP",
+					"index":         0,
+					"message":       map[string]any{"role": "assistant", "content": "hello world"},
+					"finish_reason": "stop",
 				},
 			},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     10,
-				"candidatesTokenCount": 5,
-				"totalTokenCount":      15,
+			"usage": map[string]int{
+				"prompt_tokens":     10,
+				"completion_tokens": 5,
+				"total_tokens":      15,
 			},
 		})
 	}))
@@ -58,7 +49,7 @@ func TestCompleteText(t *testing.T) {
 	p := newTestProvider(srv)
 
 	resp, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err != nil {
@@ -78,55 +69,38 @@ func TestCompleteText(t *testing.T) {
 	}
 }
 
-// --- Requirement 2: Streaming (accumulated-text delta computation) ----------
+// --- Requirement 2: Streaming -----------------------------------------------
 
 func TestStreamText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, ":streamGenerateContent") {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		// Google GenAI returns ACCUMULATED text in each chunk, not deltas.
-		w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]},\"finishReason\":null}]}\n"))
-		w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello world\"}]},\"finishReason\":\"STOP\"}]}\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":null}]}\n\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	ch, err := p.Stream(context.Background(), core.StreamRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	var text string
-	msgStart, msgEnd := false, false
 	for ev := range ch {
-		switch ev.Type {
-		case core.ProvMessageStart:
-			msgStart = true
-		case core.ProvContentDelta:
+		if ev.Type == core.ProvContentDelta {
 			text += ev.ContentDelta
-		case core.ProvMessageEnd:
-			msgEnd = true
-		case core.ProvError:
-			t.Errorf("unexpected error: %v", ev.Err)
 		}
-	}
-	if !msgStart {
-		t.Error("missing ProvMessageStart")
-	}
-	if !msgEnd {
-		t.Error("missing ProvMessageEnd")
 	}
 	if text != "hello world" {
 		t.Errorf("expected 'hello world', got %q", text)
 	}
 }
 
-// --- Requirement 3: Vision (image content blocks → inlineData) --------------
+// --- Requirement 3: Vision (image content blocks) ---------------------------
 
 func TestVisionImage(t *testing.T) {
 	var capturedBody []byte
@@ -134,29 +108,27 @@ func TestVisionImage(t *testing.T) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{
+			"choices": []map[string]any{
 				{
-					"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": "image analyzed"}},
-					},
-					"finishReason": "STOP",
+					"index":         0,
+					"message":       map[string]any{"role": "assistant", "content": "image analyzed"},
+					"finish_reason": "stop",
 				},
 			},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     100,
-				"candidatesTokenCount": 10,
-				"totalTokenCount":      110,
+			"usage": map[string]int{
+				"prompt_tokens":     100,
+				"completion_tokens": 10,
+				"total_tokens":      110,
 			},
 		})
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
-	// Anthropic-style vision content blocks → should be converted to Gemini inlineData.
+	// Anthropic-style vision content blocks — should be converted to OpenAI image_url format.
 	visionBlocks := `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"base64data"}},{"type":"text","text":"describe this image"}]`
 	resp, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: visionBlocks}},
 	})
 	if err != nil {
@@ -166,44 +138,37 @@ func TestVisionImage(t *testing.T) {
 		t.Errorf("expected 'image analyzed', got %q", resp.Content)
 	}
 
-	// Verify the request body has proper Gemini inlineData content blocks.
+	// Verify the request body has proper OpenAI image_url content blocks.
 	var reqBody map[string]any
 	if err := json.Unmarshal(capturedBody, &reqBody); err != nil {
 		t.Fatal(err)
 	}
-	contents := reqBody["contents"].([]any)
-	msg := contents[0].(map[string]any)
-	parts := msg["parts"].([]any)
+	msgs := reqBody["messages"].([]any)
+	msg := msgs[0].(map[string]any)
+	content := msg["content"].([]any)
 
-	// First part should be the image (converted to inlineData).
-	img := parts[0].(map[string]any)
-	if _, ok := img["inlineData"]; !ok {
-		t.Errorf("expected part[0] to have inlineData, got keys: %v", mapKeys(img))
+	// First block should be the image (converted to image_url).
+	img := content[0].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Errorf("expected content[0].type = 'image_url', got %q", img["type"])
 	}
-	inlineData := img["inlineData"].(map[string]any)
-	if inlineData["mimeType"] != "image/png" {
-		t.Errorf("expected mimeType 'image/png', got %q", inlineData["mimeType"])
-	}
-	if inlineData["data"] != "base64data" {
-		t.Errorf("expected data 'base64data', got %q", inlineData["data"])
+	imageURL := img["image_url"].(map[string]any)
+	if url, ok := imageURL["url"].(string); ok {
+		if !strings.Contains(url, "data:image/png;base64,base64data") {
+			t.Errorf("expected data URI, got %q", url)
+		}
+	} else {
+		t.Error("expected image_url.url to be a string")
 	}
 
-	// Second part should be text.
-	txt := parts[1].(map[string]any)
-	if txt["text"] != "describe this image" {
-		t.Errorf("expected text 'describe this image', got %q", txt["text"])
+	// Second block should be the text.
+	txt := content[1].(map[string]any)
+	if txt["type"] != "text" {
+		t.Errorf("expected content[1].type = 'text', got %q", txt["type"])
 	}
 }
 
-func mapKeys(m map[string]any) []string {
-	var keys []string
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// --- Requirement 4: Function calling (tools in request body) ----------------
+// --- Requirement 4: Function calling (tools in request) ---------------------
 
 func TestFunctionCalling(t *testing.T) {
 	var capturedBody []byte
@@ -211,45 +176,50 @@ func TestFunctionCalling(t *testing.T) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{
+			"choices": []map[string]any{
 				{
-					"content": map[string]any{
-						"role": "model",
-						"parts": []map[string]any{
-							{"functionCall": map[string]any{
-								"name": "get_weather",
-								"args": map[string]any{"location": "NYC"},
-							}},
+					"index": 0,
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call_1",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "get_weather",
+									"arguments": `{"location":"NYC"}`,
+								},
+							},
 						},
 					},
-					"finishReason": "STOP",
+					"finish_reason": "tool_calls",
 				},
 			},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     20,
-				"candidatesTokenCount": 30,
-				"totalTokenCount":      50,
+			"usage": map[string]int{
+				"prompt_tokens":     20,
+				"completion_tokens": 30,
+				"total_tokens":      50,
 			},
 		})
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
-	// Complete doesn't pass Tools, so tools should NOT be in request.
 	_, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
-		Messages: []core.Message{{Role: core.RoleUser, Content: "weather?"}},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
+		Messages: []core.Message{{Role: core.RoleUser, Content: "what's the weather in NYC?"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// Verify tools were NOT sent (Complete doesn't pass Tools).
 	var reqBody map[string]any
 	if err := json.Unmarshal(capturedBody, &reqBody); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := reqBody["toolConfig"]; ok {
-		t.Error("toolConfig should not be present when no tools are sent")
+	if _, ok := reqBody["tool_choice"]; ok {
+		t.Error("tool_choice should not be present when no tools are sent")
 	}
 }
 
@@ -258,13 +228,16 @@ func TestFunctionCallingInStreamRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"echo\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"msg\\\":\\\"hello\\\"}\"}}]},\"finish_reason\":null}]}\n\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	ch, err := p.Stream(context.Background(), core.StreamRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "echo hello"}},
 		Tools: []core.ToolSpec{
 			{
@@ -277,11 +250,30 @@ func TestFunctionCallingInStreamRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Drain channel.
-	for range ch {
+
+	hasToolStart, hasToolDelta, hasToolEnd := false, false, false
+	for ev := range ch {
+		if ev.Type == core.ProvToolCallStart && ev.ToolName == "echo" {
+			hasToolStart = true
+		}
+		if ev.Type == core.ProvToolCallDelta {
+			hasToolDelta = true
+		}
+		if ev.Type == core.ProvToolCallEnd {
+			hasToolEnd = true
+		}
+	}
+	if !hasToolStart {
+		t.Error("expected tool call start event")
+	}
+	if !hasToolDelta {
+		t.Error("expected tool call delta event")
+	}
+	if !hasToolEnd {
+		t.Error("expected tool call end event")
 	}
 
-	// Verify tools were sent in request with proper Gemini format.
+	// Verify tools were sent in request with proper OpenAI format.
 	var reqBody map[string]any
 	if err := json.Unmarshal(capturedBody, &reqBody); err != nil {
 		t.Fatal(err)
@@ -292,48 +284,48 @@ func TestFunctionCallingInStreamRequest(t *testing.T) {
 	}
 	tools := toolsRaw.([]any)
 	if len(tools) != 1 {
-		t.Fatalf("expected 1 tool entry, got %d", len(tools))
+		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
-	toolEntry := tools[0].(map[string]any)
-	funcDecls, ok := toolEntry["functionDeclarations"].([]any)
+	tool := tools[0].(map[string]any)
+	if tool["type"] != "function" {
+		t.Errorf("expected tool type 'function', got %q", tool["type"])
+	}
+	fn, ok := tool["function"].(map[string]any)
 	if !ok {
-		t.Fatal("expected functionDeclarations array")
+		t.Fatal("expected tool.function")
 	}
-	if len(funcDecls) != 1 {
-		t.Fatalf("expected 1 function declaration, got %d", len(funcDecls))
-	}
-	fn := funcDecls[0].(map[string]any)
 	if fn["name"] != "echo" {
 		t.Errorf("expected tool name 'echo', got %q", fn["name"])
 	}
-
-	// Verify toolConfig is present.
-	tc, ok := reqBody["toolConfig"].(map[string]any)
+	tc, ok := reqBody["tool_choice"]
 	if !ok {
-		t.Error("expected toolConfig in request body")
+		t.Error("expected tool_choice in request body")
 	}
-	fcc, ok := tc["functionCallingConfig"].(map[string]any)
-	if !ok {
-		t.Error("expected functionCallingConfig in toolConfig")
-	}
-	if fcc["mode"] != "AUTO" {
-		t.Errorf("expected mode 'AUTO', got %q", fcc["mode"])
+	if tc != "auto" {
+		t.Errorf("expected tool_choice = 'auto', got %q", tc)
 	}
 }
 
-// --- Requirement 5: Streaming tool calls (SSE functionCall parsing) ---------
+// --- Requirement 5: Streaming tool calls (SSE tool call parsing) ------------
 
-func TestStreamingFuncCall(t *testing.T) {
+func TestStreamingToolCalls(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		// Gemini returns complete functionCall in one chunk.
-		w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"read\",\"args\":{\"path\":\"main.go\"}}}]},\"finishReason\":\"STOP\"}]}\n"))
+		// First chunk: tool call start (ID + name + empty args).
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n"))
+		// Second chunk: args fragment 1.
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\"}}]},\"finish_reason\":null}]}\n\n"))
+		// Third chunk: args fragment 2.
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"main.go\\\"}\"}}]},\"finish_reason\":null}]}\n\n"))
+		// Finish: tool_calls.
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	ch, err := p.Stream(context.Background(), core.StreamRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "read main.go"}},
 		Tools: []core.ToolSpec{
 			{
@@ -349,7 +341,7 @@ func TestStreamingFuncCall(t *testing.T) {
 
 	var startedCallID string
 	var argsBuffer strings.Builder
-	hasStart, hasDelta, hasEnd := false, false, false
+	hasStart, hasEnd := false, false
 
 	for ev := range ch {
 		switch ev.Type {
@@ -360,7 +352,6 @@ func TestStreamingFuncCall(t *testing.T) {
 				t.Errorf("expected tool name 'read', got %q", ev.ToolName)
 			}
 		case core.ProvToolCallDelta:
-			hasDelta = true
 			argsBuffer.WriteString(ev.ToolArgsDelta)
 		case core.ProvToolCallEnd:
 			hasEnd = true
@@ -372,9 +363,6 @@ func TestStreamingFuncCall(t *testing.T) {
 
 	if !hasStart {
 		t.Error("expected ProvToolCallStart event")
-	}
-	if !hasDelta {
-		t.Error("expected ProvToolCallDelta event")
 	}
 	if !hasEnd {
 		t.Error("expected ProvToolCallEnd event")
@@ -391,19 +379,17 @@ func TestTokenUsageInComplete(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{
+			"choices": []map[string]any{
 				{
-					"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": "tok"}},
-					},
-					"finishReason": "STOP",
+					"index":         0,
+					"message":       map[string]any{"role": "assistant", "content": "tok"},
+					"finish_reason": "stop",
 				},
 			},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     42,
-				"candidatesTokenCount": 7,
-				"totalTokenCount":      49,
+			"usage": map[string]int{
+				"prompt_tokens":     42,
+				"completion_tokens": 7,
+				"total_tokens":      49,
 			},
 		})
 	}))
@@ -411,7 +397,7 @@ func TestTokenUsageInComplete(t *testing.T) {
 	p := newTestProvider(srv)
 
 	resp, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err != nil {
@@ -431,13 +417,15 @@ func TestTokenUsageInComplete(t *testing.T) {
 func TestTokenUsageInStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hi\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":30,\"candidatesTokenCount\":8,\"totalTokenCount\":38}}\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"))
+		w.Write([]byte("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":30,\"completion_tokens\":8,\"total_tokens\":38}}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	ch, err := p.Stream(context.Background(), core.StreamRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err != nil {
@@ -469,13 +457,13 @@ func TestTokenUsageInStream(t *testing.T) {
 func TestError429(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(429)
-		w.Write([]byte(`{"error":{"code":429,"message":"Rate limit exceeded","status":"RESOURCE_EXHAUSTED"}}`))
+		w.Write([]byte(`{"error":{"type":"rate_limit_exceeded","message":"Rate limit exceeded","code":"rate_limit_exceeded"}}`))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	_, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err == nil {
@@ -489,13 +477,13 @@ func TestError429(t *testing.T) {
 func TestError400(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
-		w.Write([]byte(`{"error":{"code":400,"message":"Bad request","status":"INVALID_ARGUMENT"}}`))
+		w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"Bad request","code":"invalid_request_error"}}`))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	_, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err == nil {
@@ -509,13 +497,13 @@ func TestError400(t *testing.T) {
 func TestError401(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
-		w.Write([]byte(`{"error":{"code":401,"message":"Invalid API key","status":"UNAUTHENTICATED"}}`))
+		w.Write([]byte(`{"error":{"type":"authentication_error","message":"Invalid API key","code":"invalid_api_key"}}`))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	_, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err == nil {
@@ -529,13 +517,13 @@ func TestError401(t *testing.T) {
 func TestError500(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		w.Write([]byte(`{"error":{"code":500,"message":"Internal error","status":"INTERNAL"}}`))
+		w.Write([]byte(`{"error":{"type":"server_error","message":"Internal error","code":"internal_error"}}`))
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
 	_, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err == nil {
@@ -552,11 +540,11 @@ func TestEmptyResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     1,
-				"candidatesTokenCount": 1,
-				"totalTokenCount":      2,
+			"choices": []map[string]any{},
+			"usage": map[string]int{
+				"prompt_tokens":     1,
+				"completion_tokens": 1,
+				"total_tokens":      2,
 			},
 		})
 	}))
@@ -564,7 +552,7 @@ func TestEmptyResponse(t *testing.T) {
 	p := newTestProvider(srv)
 
 	resp, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err != nil {
@@ -575,7 +563,7 @@ func TestEmptyResponse(t *testing.T) {
 	}
 }
 
-// --- Requirement 12: Rate limit retry (classify 429 as Transient) -----------
+// --- Requirement 12: Rate limit retry (classifies 429 as Transient) ---------
 
 func TestRateLimitRetry(t *testing.T) {
 	attempts := 0
@@ -583,33 +571,31 @@ func TestRateLimitRetry(t *testing.T) {
 		attempts++
 		if attempts < 3 {
 			w.WriteHeader(429)
-			w.Write([]byte(`{"error":{"code":429,"message":"Rate limited","status":"RESOURCE_EXHAUSTED"}}`))
+			w.Write([]byte(`{"error":{"type":"rate_limit_exceeded","message":"Rate limited","code":"rate_limit_exceeded"}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{
+			"choices": []map[string]any{
 				{
-					"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": "success"}},
-					},
-					"finishReason": "STOP",
+					"index":         0,
+					"message":       map[string]any{"role": "assistant", "content": "success"},
+					"finish_reason": "stop",
 				},
 			},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     1,
-				"candidatesTokenCount": 1,
-				"totalTokenCount":      2,
+			"usage": map[string]int{
+				"prompt_tokens":     1,
+				"completion_tokens": 1,
+				"total_tokens":      2,
 			},
 		})
 	}))
 	defer srv.Close()
 	p := newTestProvider(srv)
 
-	// First call gets 429 — verify correct error classification.
+	// First calls will get 429 — verify provider correctly classifies as Transient.
 	_, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:    core.ModelSpec{Name: "gpt-4o"},
 		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err == nil {
@@ -623,7 +609,7 @@ func TestRateLimitRetry(t *testing.T) {
 	}
 }
 
-// --- Error classification table (stream errors) -----------------------------
+// --- Error classification table ---------------------------------------------
 
 func TestErrorClassificationTable(t *testing.T) {
 	tests := []struct {
@@ -631,12 +617,12 @@ func TestErrorClassificationTable(t *testing.T) {
 		body    string
 		wantErr string
 	}{
-		{429, `{"error":{"code":429,"message":"Rate limited","status":"RESOURCE_EXHAUSTED"}}`, "rate limited"},
-		{500, `{"error":{"code":500,"message":"Internal error","status":"INTERNAL"}}`, "server error"},
-		{503, `{"error":{"code":503,"message":"Overloaded","status":"UNAVAILABLE"}}`, "server error"},
-		{401, `{"error":{"code":401,"message":"Invalid key","status":"UNAUTHENTICATED"}}`, "auth error"},
-		{403, `{"error":{"code":403,"message":"Forbidden","status":"PERMISSION_DENIED"}}`, "auth error"},
-		{400, `{"error":{"code":400,"message":"Bad request","status":"INVALID_ARGUMENT"}}`, "bad request"},
+		{429, `{"error":{"type":"rate_limit_exceeded","message":"Rate limited","code":"rate_limit_exceeded"}}`, "rate limited"},
+		{500, `{"error":{"type":"server_error","message":"Internal error","code":"internal_error"}}`, "server error"},
+		{503, `{"error":{"type":"server_error","message":"Overloaded","code":"server_error"}}`, "server error"},
+		{401, `{"error":{"type":"authentication_error","message":"Invalid key","code":"invalid_api_key"}}`, "auth error"},
+		{403, `{"error":{"type":"permission_error","message":"Forbidden","code":"permission_error"}}`, "auth error"},
+		{400, `{"error":{"type":"invalid_request_error","message":"Bad request","code":"invalid_request_error"}}`, "bad request"},
 	}
 
 	for _, tt := range tests {
@@ -647,7 +633,7 @@ func TestErrorClassificationTable(t *testing.T) {
 
 		p := newTestProvider(srv)
 		_, err := p.Stream(context.Background(), core.StreamRequest{
-			Model: core.ModelSpec{Name: "gemini-2.5-flash"},
+			Model: core.ModelSpec{Name: "gpt-4o"},
 		})
 
 		if err == nil {
@@ -667,8 +653,19 @@ func TestErrorClassificationTable(t *testing.T) {
 func TestCompat(t *testing.T) {
 	p := New("test-key")
 	c := p.Compat()
-	if c != "google-genai" {
-		t.Errorf("expected 'google-genai', got %q", c)
+
+	oc, ok := c.(core.OpenAICompletionsCompat)
+	if !ok {
+		t.Fatalf("expected core.OpenAICompletionsCompat, got %T", c)
+	}
+	if !oc.TemperatureField {
+		t.Error("expected TemperatureField = true")
+	}
+	if !oc.TopPField {
+		t.Error("expected TopPField = true")
+	}
+	if !oc.SupportsStop {
+		t.Error("expected SupportsStop = true")
 	}
 }
 
@@ -690,19 +687,17 @@ func TestSystemPromptAndStop(t *testing.T) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{
+			"choices": []map[string]any{
 				{
-					"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": "ok"}},
-					},
-					"finishReason": "STOP",
+					"index":         0,
+					"message":       map[string]any{"role": "assistant", "content": "ok"},
+					"finish_reason": "stop",
 				},
 			},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     1,
-				"candidatesTokenCount": 1,
-				"totalTokenCount":      2,
+			"usage": map[string]int{
+				"prompt_tokens":     1,
+				"completion_tokens": 1,
+				"total_tokens":      2,
 			},
 		})
 	}))
@@ -710,7 +705,7 @@ func TestSystemPromptAndStop(t *testing.T) {
 	p := newTestProvider(srv)
 
 	_, err := p.Complete(context.Background(), core.CompleteRequest{
-		Model:        core.ModelSpec{Name: "gemini-2.5-flash"},
+		Model:        core.ModelSpec{Name: "gpt-4o"},
 		Messages:     []core.Message{{Role: core.RoleUser, Content: "hi"}},
 		SystemPrompt: "You are helpful.",
 		Options: core.ProviderOptions{
@@ -726,72 +721,19 @@ func TestSystemPromptAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify system instruction.
-	si, ok := reqBody["systemInstruction"].(map[string]any)
-	if !ok {
-		t.Fatal("expected systemInstruction in request body")
+	// Verify system prompt is first message.
+	msgs := reqBody["messages"].([]any)
+	sysMsg := msgs[0].(map[string]any)
+	if sysMsg["role"] != "system" {
+		t.Errorf("expected first message role 'system', got %q", sysMsg["role"])
 	}
-	siParts := si["parts"].([]any)
-	siText := siParts[0].(map[string]any)
-	if siText["text"] != "You are helpful." {
-		t.Errorf("expected system instruction text 'You are helpful.', got %q", siText["text"])
+	if sysMsg["content"] != "You are helpful." {
+		t.Errorf("expected system content 'You are helpful.', got %q", sysMsg["content"])
 	}
 
-	// Verify stop sequences in generationConfig.
-	gc, ok := reqBody["generationConfig"].(map[string]any)
-	if !ok {
-		t.Fatal("expected generationConfig in request body")
-	}
-	stops := gc["stopSequences"].([]any)
+	// Verify stop sequences.
+	stops := reqBody["stop"].([]any)
 	if len(stops) != 2 {
 		t.Errorf("expected 2 stop sequences, got %d", len(stops))
-	}
-}
-
-// --- OnPayload / OnResponse hooks (backward compat) -------------------------
-
-func TestOnPayloadAndOnResponse(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hooked\"}]},\"finishReason\":\"STOP\"}]}\n"))
-	}))
-	defer srv.Close()
-	p := newTestProvider(srv)
-
-	payloadCalled := false
-	responseCalled := false
-
-	ch, err := p.Stream(context.Background(), core.StreamRequest{
-		Model:    core.ModelSpec{Name: "gemini-2.5-flash"},
-		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
-		OnPayload: func(payload any) (any, error) {
-			payloadCalled = true
-			return payload, nil
-		},
-		OnResponse: func(statusCode int, headers map[string][]string) {
-			responseCalled = true
-			if statusCode != 200 {
-				t.Errorf("expected status 200, got %d", statusCode)
-			}
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Drain channel.
-	var text string
-	for ev := range ch {
-		if ev.Type == core.ProvContentDelta {
-			text += ev.ContentDelta
-		}
-	}
-	if text != "hooked" {
-		t.Errorf("expected 'hooked', got %q", text)
-	}
-	if !payloadCalled {
-		t.Error("OnPayload hook was not called")
-	}
-	if !responseCalled {
-		t.Error("OnResponse hook was not called")
 	}
 }

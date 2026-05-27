@@ -1,0 +1,13 @@
+name: compare-plugin
+version: 0.1.0
+description: Compare LLM responses across 3 providers in parallel
+author: tau
+license: MIT
+entrypoint: ./compare-plugin
+tools:
+  - name: compare
+    description: Run a prompt against 3 providers and compare results
+providers:
+  - openai
+  - anthropic
+  - google
