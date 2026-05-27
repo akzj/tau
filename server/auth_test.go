@@ -16,11 +16,6 @@ func newTestServer(t *testing.T) *Server {
 	return New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 }
 
-func handler(t *testing.T, s *Server) *Server {
-	t.Helper()
-	return s
-}
-
 // --- Auth Tests ---
 
 // TestAuthMissingKey_401 verifies 401 is returned when TAU_API_KEYS is set and no key provided.
@@ -29,7 +24,7 @@ func TestAuthMissingKey_401(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest("GET", "/v1/tools", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 401 {
 		t.Errorf("expected 401 for missing key, got %d: %s", w.Code, w.Body.String())
 	}
@@ -42,7 +37,7 @@ func TestAuthValidKeyBearer_200(t *testing.T) {
 	req := httptest.NewRequest("GET", "/v1/tools", nil)
 	req.Header.Set("Authorization", "Bearer test-key-1")
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200 for valid Bearer, got %d: %s", w.Code, w.Body.String())
 	}
@@ -55,7 +50,7 @@ func TestAuthValidKeyXAPIKey_200(t *testing.T) {
 	req := httptest.NewRequest("GET", "/v1/tools", nil)
 	req.Header.Set("X-API-Key", "test-key-1")
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200 for valid X-API-Key, got %d: %s", w.Code, w.Body.String())
 	}
@@ -68,7 +63,7 @@ func TestAuthInvalidKey_401(t *testing.T) {
 	req := httptest.NewRequest("GET", "/v1/tools", nil)
 	req.Header.Set("Authorization", "Bearer wrong-key")
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 401 {
 		t.Errorf("expected 401 for invalid key, got %d: %s", w.Code, w.Body.String())
 	}
@@ -80,7 +75,7 @@ func TestAuthQueryParamKey_200(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest("GET", "/v1/tools?api_key=test-key-1", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200 for query param key, got %d: %s", w.Code, w.Body.String())
 	}
@@ -95,7 +90,7 @@ func TestAuthDevMode_200(t *testing.T) {
 	}
 	req := httptest.NewRequest("GET", "/v1/tools", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200 in dev mode, got %d: %s", w.Code, w.Body.String())
 	}
@@ -107,7 +102,7 @@ func TestAuthDevMode_HealthBypass(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest("GET", "/v1/health", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("health should bypass auth, got %d: %s", w.Code, w.Body.String())
 	}
@@ -119,7 +114,7 @@ func TestAuthPublic_OpenAPIBypass(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest("GET", "/v1/openapi.json", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("openapi should bypass auth, got %d: %s", w.Code, w.Body.String())
 	}
@@ -134,7 +129,7 @@ func TestAdminKey_Unauthorized(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest("GET", "/v1/admin/keys", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 401 {
 		t.Errorf("expected 401 without admin key, got %d", w.Code)
 	}
@@ -154,7 +149,7 @@ func TestAdminKey_CRUD(t *testing.T) {
 	req1 := httptest.NewRequest("GET", "/v1/admin/keys", nil)
 	adminAuth(req1)
 	w1 := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w1, req1)
+	s.router.ServeHTTP(w1, req1)
 	if w1.Code != 200 {
 		t.Fatalf("GET admin/keys: expected 200, got %d: %s", w1.Code, w1.Body.String())
 	}
@@ -167,9 +162,10 @@ func TestAdminKey_CRUD(t *testing.T) {
 
 	// POST: create a new key
 	req2 := httptest.NewRequest("POST", "/v1/admin/keys", bytes.NewBufferString(`{"key":"custom-key-123"}`))
+	req2.Header.Set("Content-Type", "application/json")
 	adminAuth(req2)
 	w2 := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w2, req2)
+	s.router.ServeHTTP(w2, req2)
 	if w2.Code != 201 {
 		t.Fatalf("POST admin/keys: expected 201, got %d: %s", w2.Code, w2.Body.String())
 	}
@@ -186,7 +182,7 @@ func TestAdminKey_CRUD(t *testing.T) {
 	req3 := httptest.NewRequest("GET", "/v1/admin/keys", nil)
 	adminAuth(req3)
 	w3 := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w3, req3)
+	s.router.ServeHTTP(w3, req3)
 	if w3.Code != 200 {
 		t.Fatalf("GET admin/keys (2): expected 200, got %d", w3.Code)
 	}
@@ -201,7 +197,7 @@ func TestAdminKey_CRUD(t *testing.T) {
 	req4 := httptest.NewRequest("DELETE", "/v1/admin/keys/"+masked, nil)
 	adminAuth(req4)
 	w4 := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w4, req4)
+	s.router.ServeHTTP(w4, req4)
 	if w4.Code != 200 {
 		t.Fatalf("DELETE admin/keys: expected 200, got %d: %s", w4.Code, w4.Body.String())
 	}
@@ -210,7 +206,7 @@ func TestAdminKey_CRUD(t *testing.T) {
 	req5 := httptest.NewRequest("GET", "/v1/admin/keys", nil)
 	adminAuth(req5)
 	w5 := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w5, req5)
+	s.router.ServeHTTP(w5, req5)
 	var listResp3 map[string]any
 	json.NewDecoder(w5.Body).Decode(&listResp3)
 	if count, ok := listResp3["count"].(float64); !ok || int(count) != 1 {
@@ -227,7 +223,7 @@ func TestAdminKey_DeleteNonexistent(t *testing.T) {
 	req := httptest.NewRequest("DELETE", "/v1/admin/keys/nonexistent-key", nil)
 	req.Header.Set("Authorization", "Bearer admin-secret")
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 404 {
 		t.Errorf("expected 404 for nonexistent key, got %d", w.Code)
 	}
@@ -245,7 +241,7 @@ func TestRateLimit_429(t *testing.T) {
 		req := httptest.NewRequest("GET", "/v1/tools", nil)
 		req.Header.Set("Authorization", "Bearer test-key-1")
 		w := httptest.NewRecorder()
-		s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+		s.router.ServeHTTP(w, req)
 		return w
 	}
 
@@ -271,7 +267,7 @@ func TestOpenAPISpec_Valid(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/v1/openapi.json", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}

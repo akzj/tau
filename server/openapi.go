@@ -1,8 +1,8 @@
 package server
 
-import "net/http"
+import "github.com/gin-gonic/gin"
 
-func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleOpenAPI(c *gin.Context) {
 	spec := map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
@@ -128,5 +128,5 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	writeJSON(w, 200, spec)
+	c.JSON(200, spec)
 }

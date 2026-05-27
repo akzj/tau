@@ -65,6 +65,10 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 
 	Logger().Debug("loop: turn start", "input", input.Text[:min(len(input.Text), 80)])
 
+	// TRACE: agent.start
+	if TraceEnabled() {
+		MetricRequests.Inc()
+	}
 	// 1. Add user message to transcript
 	userMsg := Message{
 		Role:      RoleUser,
@@ -177,6 +181,10 @@ func (l *defaultLoop) Prompt(ctx context.Context, sess *Session, input UserInput
 		return nil, fmt.Errorf("rate limit wait: %w", err)
 	}
 	result, err := Retry(ctx, DefaultRetryConfig(), func(ctx context.Context) (streamResult, error) {
+		// TRACE: provider.call
+		if TraceEnabled() {
+			MetricProviderLatency.Observe(0)
+		}
 		ch, err := p.Stream(ctx, req)
 		if err != nil {
 			return streamResult{}, err
@@ -384,6 +392,10 @@ func (r *Run) processStreamEvents(ctx context.Context, events <-chan StreamEvent
 		}
 	}
 
+	// TRACE: agent.response
+	if TraceEnabled() {
+		MetricRequests.Inc()
+	}
 	r.events <- TurnEnd{Timestamp_: timeNow(), TurnID: turnID, Reason: string(ReasonComplete)}
 }
 
@@ -514,6 +526,10 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 							}
 							if params == nil && tc.Args != "" {
 								params = raw
+							}
+							// TRACE: tool.call
+							if TraceEnabled() {
+								MetricToolCalls.Inc()
 							}
 							result, err := tool.Execute(ctx, tc.CallID, params, func(pr PartialResult) {
 								r.events <- ToolCallUpdate{Timestamp_: timeNow(), CallID: tc.CallID, Partial: pr}
@@ -655,6 +671,9 @@ func (r *Run) processProviderEvents(ctx context.Context, provEvents <-chan Provi
 			// Deferred: tools executed in parallel on ProvMessageEnd
 
 		case ProvError:
+			if TraceEnabled() {
+				MetricErrors.Inc()
+			}
 			r.events <- ErrorEvent{Timestamp_: timeNow(), Err: pe.Err, Code: ErrProvider}
 			r.sess.EventBus.Emit(Event{Type: EvtError, Payload: pe.Err.Error()})
 			// Memory: record error episode

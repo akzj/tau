@@ -1,24 +1,24 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
-	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 // handleAdminKeys handles GET and POST on /v1/admin/keys.
-func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
+func (s *Server) handleAdminKeys(c *gin.Context) {
+	switch c.Request.Method {
 	case http.MethodGet:
 		keys := s.keyStore.ListKeys()
-		writeJSON(w, 200, map[string]any{"keys": keys, "count": len(keys)})
+		c.JSON(200, gin.H{"keys": keys, "count": len(keys)})
 
 	case http.MethodPost:
 		var req struct {
 			Key string `json:"key"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, 400, map[string]string{"error": "invalid json"})
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "invalid json"})
 			return
 		}
 		key := req.Key
@@ -26,35 +26,29 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 			key = generateKey()
 		}
 		ak := s.keyStore.AddKey(key)
-		writeJSON(w, 201, map[string]any{
+		c.JSON(201, gin.H{
 			"key":        ak.Key,
 			"masked":     ak.Masked,
 			"created_at": ak.CreatedAt,
 		})
 
 	default:
-		http.Error(w, "method not allowed", 405)
+		c.AbortWithStatus(405)
 	}
 }
 
-// handleAdminKeyByID handles DELETE on /v1/admin/keys/{masked-or-key}.
-func (s *Server) handleAdminKeyByID(w http.ResponseWriter, r *http.Request) {
-	// Extract the key identifier from URL path
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/admin/keys/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
-		http.Error(w, "key identifier required", 400)
-		return
-	}
-	maskedOrKey := parts[0]
+// handleAdminKeyByID handles DELETE on /v1/admin/keys/:id.
+func (s *Server) handleAdminKeyByID(c *gin.Context) {
+	maskedOrKey := c.Param("id")
 
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", 405)
+	if c.Request.Method != http.MethodDelete {
+		c.AbortWithStatus(405)
 		return
 	}
 
 	// Try exact key match first
 	if s.keyStore.DeleteKey(maskedOrKey) {
-		writeJSON(w, 200, map[string]string{"deleted": maskKey(maskedOrKey)})
+		c.JSON(200, gin.H{"deleted": maskKey(maskedOrKey)})
 		return
 	}
 
@@ -62,10 +56,10 @@ func (s *Server) handleAdminKeyByID(w http.ResponseWriter, r *http.Request) {
 	for _, k := range s.keyStore.ListKeys() {
 		if k.Masked == maskedOrKey {
 			s.keyStore.DeleteKey(k.Key)
-			writeJSON(w, 200, map[string]string{"deleted": maskedOrKey})
+			c.JSON(200, gin.H{"deleted": maskedOrKey})
 			return
 		}
 	}
 
-	writeJSON(w, 404, map[string]string{"error": "key not found"})
+	c.JSON(404, gin.H{"error": "key not found"})
 }

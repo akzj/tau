@@ -5,13 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/akzj/tau/core"
+	"github.com/gin-gonic/gin"
 )
 
 // APIKeyStore manages API keys with CRUD and rate limiting.
@@ -156,63 +156,71 @@ func generateKey() string {
 
 // --- Middleware ---
 
-// AuthMiddleware validates API keys and applies rate limiting.
-func (s *Server) AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// authMiddleware validates API keys and applies rate limiting.
+func (s *Server) authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+
 		// Always bypass auth for health
-		if r.URL.Path == "/v1/health" {
-			next.ServeHTTP(w, r)
+		if path == "/v1/health" {
+			c.Next()
 			return
 		}
 
 		// OpenAPI spec is public
-		if r.URL.Path == "/v1/openapi.json" {
-			next.ServeHTTP(w, r)
+		if path == "/v1/openapi.json" {
+			c.Next()
+			return
+		}
+
+		// Telemetry/metrics endpoints are public
+		if path == "/metrics" || path == "/v1/telemetry/traces" || path == "/v1/telemetry/metrics" {
+			c.Next()
 			return
 		}
 
 		// Admin endpoints require admin key
-		if strings.HasPrefix(r.URL.Path, "/v1/admin/") {
-			if !s.validateAdmin(r) {
-				writeJSON(w, 401, map[string]string{"error": "unauthorized"})
+		if strings.HasPrefix(path, "/v1/admin/") {
+			if !s.validateAdminRequest(c) {
+				c.AbortWithStatusJSON(401, gin.H{"error": "unauthorized"})
 				return
 			}
-			next.ServeHTTP(w, r)
+			c.Next()
 			return
 		}
 
 		// Extract key from Authorization header, X-API-Key, or query param
-		key := extractAPIKey(r)
+		key := extractAPIKey(c)
 		if key == "" {
 			if s.keyStore.IsDevMode() {
-				next.ServeHTTP(w, r)
+				c.Next()
 				return
 			}
-			writeJSON(w, 401, map[string]string{"error": "missing api key"})
+			c.AbortWithStatusJSON(401, gin.H{"error": "missing api key"})
 			return
 		}
 
 		// Validate key
 		ak, ok := s.keyStore.Validate(key)
 		if !ok {
-			writeJSON(w, 401, map[string]string{"error": "invalid api key"})
+			c.AbortWithStatusJSON(401, gin.H{"error": "invalid api key"})
 			return
 		}
 
 		// Rate limiting
 		limiter := s.keyStore.GetRateLimiter(ak.Key)
 		if limiter != nil && !limiter.Allow() {
-			writeJSON(w, 429, map[string]string{"error": "rate limit exceeded"})
+			c.AbortWithStatusJSON(429, gin.H{"error": "rate limit exceeded"})
 			return
 		}
 
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
 }
 
-// validateAdmin checks whether the request carries the admin key.
-func (s *Server) validateAdmin(r *http.Request) bool {
-	key := extractAPIKey(r)
+// validateAdminRequest checks whether the request carries the admin key.
+func (s *Server) validateAdminRequest(c *gin.Context) bool {
+	key := extractAPIKey(c)
 	return key != "" && key == s.keyStore.AdminKey()
 }
 
@@ -220,15 +228,15 @@ func (s *Server) validateAdmin(r *http.Request) bool {
 // 1. Authorization: Bearer <token>
 // 2. X-API-Key header
 // 3. api_key query parameter
-func extractAPIKey(r *http.Request) string {
-	auth := r.Header.Get("Authorization")
+func extractAPIKey(c *gin.Context) string {
+	auth := c.GetHeader("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
-	if key := r.Header.Get("X-API-Key"); key != "" {
+	if key := c.GetHeader("X-API-Key"); key != "" {
 		return key
 	}
-	if key := r.URL.Query().Get("api_key"); key != "" {
+	if key := c.Query("api_key"); key != "" {
 		return key
 	}
 	return ""

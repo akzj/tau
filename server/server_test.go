@@ -14,7 +14,7 @@ func TestHealth(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	req := httptest.NewRequest("GET", "/v1/health", nil)
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
@@ -29,7 +29,7 @@ func TestTools(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	req := httptest.NewRequest("GET", "/v1/tools", nil)
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
@@ -39,7 +39,7 @@ func TestCreateSession(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	req := httptest.NewRequest("POST", "/v1/sessions", nil)
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 201 {
 		t.Errorf("expected 201, got %d", w.Code)
 	}
@@ -54,12 +54,12 @@ func TestGetSession(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	// Create first
 	w1 := httptest.NewRecorder()
-	s.mux.ServeHTTP(w1, httptest.NewRequest("POST", "/v1/sessions", nil))
+	s.router.ServeHTTP(w1, httptest.NewRequest("POST", "/v1/sessions", nil))
 	var create map[string]string
 	json.NewDecoder(w1.Body).Decode(&create)
 
 	w2 := httptest.NewRecorder()
-	s.mux.ServeHTTP(w2, httptest.NewRequest("GET", "/v1/sessions/"+create["id"], nil))
+	s.router.ServeHTTP(w2, httptest.NewRequest("GET", "/v1/sessions/"+create["id"], nil))
 	if w2.Code != 200 {
 		t.Errorf("expected 200, got %d", w2.Code)
 	}
@@ -68,12 +68,12 @@ func TestGetSession(t *testing.T) {
 func TestDeleteSession(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	w1 := httptest.NewRecorder()
-	s.mux.ServeHTTP(w1, httptest.NewRequest("POST", "/v1/sessions", nil))
+	s.router.ServeHTTP(w1, httptest.NewRequest("POST", "/v1/sessions", nil))
 	var create map[string]string
 	json.NewDecoder(w1.Body).Decode(&create)
 
 	w2 := httptest.NewRecorder()
-	s.mux.ServeHTTP(w2, httptest.NewRequest("DELETE", "/v1/sessions/"+create["id"], nil))
+	s.router.ServeHTTP(w2, httptest.NewRequest("DELETE", "/v1/sessions/"+create["id"], nil))
 	if w2.Code != 200 {
 		t.Errorf("expected 200, got %d", w2.Code)
 	}
@@ -83,8 +83,9 @@ func TestChat(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New(), Model: "test"})
 	body := bytes.NewBufferString(`{"prompt":"hello"}`)
 	req := httptest.NewRequest("POST", "/v1/chat", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 && w.Code != 500 {
 		t.Errorf("expected 200 or 500, got %d: %s", w.Code, w.Body.String())
 	}
@@ -94,8 +95,9 @@ func TestChatEmptyPrompt(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	body := bytes.NewBufferString(`{"prompt":""}`)
 	req := httptest.NewRequest("POST", "/v1/chat", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Errorf("expected 400, got %d", w.Code)
 	}
@@ -107,7 +109,7 @@ func TestAuthMissingKey(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	req := httptest.NewRequest("POST", "/v1/sessions", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 401 {
 		t.Errorf("expected 401, got %d", w.Code)
 	}
@@ -120,7 +122,7 @@ func TestAuthValidKey(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 201 {
 		t.Errorf("expected 201, got %d", w.Code)
 	}
@@ -132,7 +134,7 @@ func TestHealthNoAuth(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	req := httptest.NewRequest("GET", "/v1/health", nil)
 	w := httptest.NewRecorder()
-	s.AuthMiddleware(s.middleware(s.mux)).ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Errorf("health should bypass auth, got %d", w.Code)
 	}
@@ -142,7 +144,7 @@ func TestGetSessionNotFound(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	req := httptest.NewRequest("GET", "/v1/sessions/nonexistent", nil)
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	if w.Code != 404 {
 		t.Errorf("expected 404, got %d", w.Code)
 	}
@@ -152,10 +154,10 @@ func TestListSessions(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New()})
 	// Create a session first
 	w1 := httptest.NewRecorder()
-	s.mux.ServeHTTP(w1, httptest.NewRequest("POST", "/v1/sessions", nil))
+	s.router.ServeHTTP(w1, httptest.NewRequest("POST", "/v1/sessions", nil))
 
 	w2 := httptest.NewRecorder()
-	s.mux.ServeHTTP(w2, httptest.NewRequest("GET", "/v1/sessions", nil))
+	s.router.ServeHTTP(w2, httptest.NewRequest("GET", "/v1/sessions", nil))
 	if w2.Code != 200 {
 		t.Errorf("expected 200, got %d", w2.Code)
 	}
@@ -171,8 +173,9 @@ func TestChatStream(t *testing.T) {
 	s := New(Options{Port: "0", Host: "localhost", Workspace: t.TempDir(), Provider: faux.New(), WireAPI: core.WireOpenAICompletions})
 	body := bytes.NewBufferString(`{"prompt":"hello"}`)
 	req := httptest.NewRequest("POST", "/v1/chat/stream", body)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.router.ServeHTTP(w, req)
 	// Can succeed or fail depending on faux provider state — but not panic
 	if w.Code != 200 && w.Code != 500 {
 		t.Errorf("expected 200, got %d", w.Code)

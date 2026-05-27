@@ -2,24 +2,23 @@ package server
 
 import (
 	"log"
-	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
-func (s *Server) middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		// CORS
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-API-Key")
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(200)
+func (s *Server) corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type,Authorization,X-API-Key")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(200)
 			return
 		}
 
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
-		next.ServeHTTP(w, r)
-	})
+		start := time.Now()
+		c.Next()
+		log.Printf("%s %s %s", c.Request.Method, c.Request.URL.Path, time.Since(start))
+	}
 }

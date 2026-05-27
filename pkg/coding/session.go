@@ -27,6 +27,7 @@ type CodingSessionOptions struct {
 	MaxTokens     int                 // token budget (default 128000)
 	CtxStrategy   core.ContextStrategy // context management strategy
 	Strategy      string              // strategy name (default: react)
+	ReflectDepth  int                 // reflection correction rounds (0 = disabled)
 }
 
 // NewCodingSession creates a session with all 7 coding tools registered.
@@ -44,6 +45,7 @@ func NewCodingSession(ctx context.Context, opts CodingSessionOptions) (*CodingSe
 		SystemPrompt: opts.SystemPrompt,
 		MaxTokens:    opts.MaxTokens,
 		CtxStrategy:  opts.CtxStrategy,
+		ReflectDepth: opts.ReflectDepth,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)

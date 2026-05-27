@@ -16,12 +16,13 @@ type SystemPromptFn func(sess *Session) (string, error)
 
 // SessionOptions configures a new Session.
 type SessionOptions struct {
-	SystemPrompt SystemPromptFn
-	Provider     Provider        // direct provider reference for demo simplicity
-	DefaultModel ModelSpec       // default model for Loop turns
-	MaxTokens    int             // token budget (default 128000)
-	CtxStrategy  ContextStrategy // context management strategy (default "sliding")
-	MemoryDir    string          // directory for memory persistence (empty = disabled)
+	SystemPrompt  SystemPromptFn
+	Provider      Provider        // direct provider reference for demo simplicity
+	DefaultModel  ModelSpec       // default model for Loop turns
+	MaxTokens     int             // token budget (default 128000)
+	CtxStrategy   ContextStrategy // context management strategy (default "sliding")
+	MemoryDir     string          // directory for memory persistence (empty = disabled)
+	ReflectDepth  int             // reflection correction rounds (0 = disabled)
 }
 
 // SteerEntry is a pending steer instruction.
@@ -65,6 +66,7 @@ type Session struct {
 	Memory        *MemorySystem       // 3-layer memory system (nil = disabled)
 	YesMode       bool                // --yes mode (skip all confirmation)
 	Strategy      AgentStrategy       // pluggable reasoning strategy
+	Reflection    *ReflectionEngine   // post-turn reflection engine (nil = disabled)
 	SkillLoader   *SkillLoader        // skill loader (lazy init in loop)
 	StreamUI      chan<- StreamEvent   // nil = non-streaming mode
 	ctx           context.Context
@@ -106,6 +108,13 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	if s.Strategy == nil {
 		s.Strategy = NewReActStrategy()
 	}
+
+	// Reflection: subscribe to turn-end events for post-processing
+	if opts.ReflectDepth > 0 {
+		s.Reflection = NewReflectionEngine(opts.ReflectDepth)
+		s.setupReflectionHook()
+	}
+
 	return s, nil
 }
 
@@ -209,4 +218,47 @@ func (s *Session) On(eventType EventType, handler func(Event)) func() {
 		}
 	}()
 	return cancel
+}
+
+// setupReflectionHook subscribes to turn-end events and runs post-turn reflection.
+// When issues are detected, a correction prompt is injected as a user message
+// into the conversation so the next turn picks it up.
+func (s *Session) setupReflectionHook() {
+	if s.Reflection == nil {
+		return
+	}
+	ch, cancel := s.EventBus.Subscribe()
+	go func() {
+		defer cancel()
+		for evt := range ch {
+			if evt.Type != EvtTurnEnd || s.Reflection == nil {
+				continue
+			}
+			// Find last assistant message in the conversation
+			msgs := s.Conversation.ToMessages()
+			var lastContent string
+			for i := len(msgs) - 1; i >= 0; i-- {
+				if msgs[i].Role == RoleAssistant && msgs[i].Content != "" {
+					lastContent = msgs[i].Content
+					break
+				}
+			}
+			if lastContent == "" {
+				continue
+			}
+
+			result := s.Reflection.Review(lastContent)
+			if result.Passed {
+				continue
+			}
+
+			correction := s.Reflection.BuildCorrectionPrompt(lastContent, result.Issues)
+			correctionMsg := Message{
+				Role:    RoleUser,
+				Content: correction,
+			}
+			s.Conversation.Add(correctionMsg)
+			s.Transcript.Append(correctionMsg)
+		}
+	}()
 }
