@@ -67,7 +67,7 @@ func DepGraphTool() core.Tool {
 			var output string
 			switch args.OutputFormat {
 			case "json":
-				output = formatJSON(pkgs, isExternal)
+				output = formatDepJSON(pkgs, isExternal)
 			case "mermaid":
 				output = formatMermaid(pkgs, isExternal, args.MaxDepth)
 			case "dot":
@@ -316,7 +316,7 @@ func writeDotEdges(b *strings.Builder, index map[string]pkgInfo, filter func(str
 
 // ---------- json ----------
 
-func formatJSON(pkgs []pkgInfo, filter func(string) bool) string {
+func formatDepJSON(pkgs []pkgInfo, filter func(string) bool) string {
 	type depEntry struct {
 		Package      string   `json:"package"`
 		Dependencies []string `json:"dependencies"`

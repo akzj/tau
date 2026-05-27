@@ -668,6 +668,28 @@ func listAllTools() []core.Tool {
 		tools.GitBranchTool(),
 		tools.ListSymbolsTool(),
 		tools.CallHierarchyTool(),
+		tools.ApiSurfaceTool(),
+		tools.SemanticSearchTool(),
+		tools.FindDeadcodeTool(),
+		tools.DepGraphTool(),
+		tools.LintCheckTool(),
+		tools.AuditLicenseTool(),
+		tools.CheckDocsTool(),
+		tools.ComplexityReportTool(),
+		tools.TestGapTool(),
+		tools.RaceCheckTool(),
+		tools.JSONSchemaTool(),
+		tools.SQLFromStructTool(),
+		tools.CSVAnalyzeTool(),
+		tools.MigrateDBTool(),
+		tools.BackupConfigTool(),
+		tools.DataDiffTool(),
+		tools.RefactorRenameTool(),
+		tools.ExtractFunctionTool(),
+		tools.InlineVariableTool(),
+		tools.GenerateInterfaceTool(),
+		tools.AddErrorWrappingTool(),
+		tools.GenerateMocksTool(),
 	}
 }
 
@@ -800,7 +822,7 @@ func runDefault(cmd *cobra.Command, args []string) {
 		return
 	}
 	if cfgListTools {
-		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag", "list_files", "search_code", "run_tests", "git_diff", "ask_user", "lint", "format", "deps", "coverage", "rag_search", "prompt_render", "verify", "browse", "git_commit", "git_log", "git_branch", "find_references", "run_test", "run_bench", "format_code", "lint_code", "docker_build", "env_manage", "exec_sandbox", "web_scrape", "github_issue", "github_pr", "github_search", "git_stash", "git_blame", "file_search", "file_diff_dir", "json_query", "csv_query", "template_render", "doc_generate", "env_validate", "git_tag", "git_revert", "git_cherry_pick", "git_rebase", "web_download", "web_api_call", "web_screenshot", "yaml_query", "toml_query", "xml_query", "file_watch", "file_archive", "file_checksum", "code_lint", "code_format_multi", "docker_ps", "docker_logs", "process_list", "slack_post", "email_send", "jira_issue", "shell_complete", "notion_api", "linear_api", "discord_post", "telegram_send", "google_drive", "google_sheets", "aws_s3", "docker_build_api", "k8s_pod", "grafana_query", "sentry_issue", "stripe_invoice"}
+		toolNames := []string{"read", "write", "edit", "bash", "glob", "grep", "task", "task_tracker", "web_search", "web_fetch", "workspace_diag", "list_files", "search_code", "run_tests", "git_diff", "ask_user", "lint", "format", "deps", "coverage", "rag_search", "prompt_render", "verify", "browse", "git_commit", "git_log", "git_branch", "find_references", "run_test", "run_bench", "format_code", "lint_code", "docker_build", "env_manage", "exec_sandbox", "web_scrape", "github_issue", "github_pr", "github_search", "git_stash", "git_blame", "file_search", "file_diff_dir", "json_query", "csv_query", "template_render", "doc_generate", "env_validate", "git_tag", "git_revert", "git_cherry_pick", "git_rebase", "web_download", "web_api_call", "web_screenshot", "yaml_query", "toml_query", "xml_query", "file_watch", "file_archive", "file_checksum", "code_lint", "code_format_multi", "docker_ps", "docker_logs", "process_list", "slack_post", "email_send", "jira_issue", "shell_complete", "notion_api", "linear_api", "discord_post", "telegram_send", "google_drive", "google_sheets", "aws_s3", "docker_build_api", "k8s_pod", "grafana_query", "sentry_issue", "stripe_invoice", "list_symbols", "call_hierarchy", "find_deadcode", "dep_graph", "api_surface", "semantic_search", "lint_check", "audit_license", "check_docs", "complexity_report", "test_gap", "race_check", "ci_status", "release_notes", "pr_review", "issue_triage", "changelog", "json_schema", "sql_from_struct", "csv_analyze", "migrate_db", "backup_config", "data_diff"}
 		fmt.Println("Available tools:")
 		for _, t := range toolNames {
 			fmt.Printf("  %s\n", t)

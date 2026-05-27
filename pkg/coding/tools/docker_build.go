@@ -119,6 +119,7 @@ func DockerBuildTool() core.Tool {
 					pushURL = pushResult
 				}
 			}
+			_ = pushURL
 
 			sb.WriteString("\n### Build Log\n```\n")
 			log := buildLog
