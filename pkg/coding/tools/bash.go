@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/akzj/tau/core"
-	"github.com/akzj/tau/pkg/sandbox"
 )
 
 // gitDestructiveOps is the set of git commands that should be blocked or warned.
@@ -113,8 +112,9 @@ func (b *bashThreePhase) Execute(ctx context.Context, prepared core.PreparedTool
 	defer cancel()
 
 	// Route through container sandbox if available
-	if SandboxRunner != nil && SandboxRunner.Backend() != sandbox.None {
-		result, runErr := SandboxRunner.Run(cmdCtx, bp.Command, bp.WorkDir, time.Duration(bp.TimeoutSeconds)*time.Second)
+	backend := SandboxRunner.Backend()
+	if SandboxRunner != nil && backend != "local" && backend != "none" {
+		result, runErr := SandboxRunner.Run(cmdCtx, bp.Command, bp.WorkDir)
 		if runErr == nil {
 			output := result.Stdout
 			if result.Stderr != "" {

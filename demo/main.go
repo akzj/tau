@@ -98,7 +98,7 @@ func main() {
 	// Initialize memory system for demo
 	memDir, _ := os.MkdirTemp("", "tau-memory-demo-*")
 	defer os.RemoveAll(memDir)
-	sess.Memory = core.NewMemorySystem(memDir, memDir)
+	sess.Memory = core.NewMemorySystem(memDir, memDir, nil)
 
 	// 4. Multi-turn: Prompt → Continue
 	fmt.Println("=== tau demo: multi-turn echo ===")

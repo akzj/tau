@@ -10,7 +10,7 @@ func TestMemoryIntegration_WorkingMemoryInLoop(t *testing.T) {
 	sess := &Session{
 		ID:        "test-mem",
 		Transcript: NewTranscript(),
-		Memory:    NewMemorySystem(dir, dir),
+		Memory:    NewMemorySystem(dir, dir, nil),
 		Tools:     NewToolRegistry(),
 		Providers: NewProviderRegistry(),
 	}
@@ -37,7 +37,7 @@ func TestMemoryIntegration_WorkingMemoryInLoop(t *testing.T) {
 
 func TestMemoryIntegration_EpisodicLearning(t *testing.T) {
 	dir := t.TempDir()
-	ms := NewMemorySystem(dir, dir)
+	ms := NewMemorySystem(dir, dir, nil)
 
 	ms.RecordEpisode(
 		"error: nil pointer dereference in read.go:42",

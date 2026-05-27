@@ -13,8 +13,8 @@ import (
 var WorkspaceRoot string
 
 // SandboxRunner is an optional container runner. Set at session init.
-// When nil or Backend() returns None, the bash tool falls through to direct exec.
-var SandboxRunner sandbox.Runner
+// When nil or Backend() returns "none"/"local", callers fall through to direct exec.
+var SandboxRunner *sandbox.Runner
 
 // ResolvePath resolves a relative path against the workspace root.
 // Rejects paths that escape the workspace (.., symlinks, absolute paths).

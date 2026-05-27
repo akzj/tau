@@ -10,10 +10,14 @@ import (
 	"github.com/akzj/tau/providers/azure-openai"
 	"github.com/akzj/tau/providers/bedrock"
 	"github.com/akzj/tau/providers/codex-responses"
+	"github.com/akzj/tau/providers/cohere"
+	"github.com/akzj/tau/providers/deepseek"
 	"github.com/akzj/tau/providers/google-genai"
+	"github.com/akzj/tau/providers/groq"
 	"github.com/akzj/tau/providers/mistral"
 	"github.com/akzj/tau/providers/openai-completions"
 	"github.com/akzj/tau/providers/openai-responses"
+	"github.com/akzj/tau/providers/together"
 	"github.com/akzj/tau/providers/vertex-ai"
 )
 
@@ -62,8 +66,20 @@ func NewProviderLoader() *ProviderLoader {
 	l.RegisterFactory("codex", func() (core.Provider, error) {
 		return codex_responses.NewProvider()
 	})
+	l.RegisterFactory("cohere", func() (core.Provider, error) {
+		return cohere.NewProvider()
+	})
+	l.RegisterFactory("deepseek", func() (core.Provider, error) {
+		return deepseek.NewProvider()
+	})
 	l.RegisterFactory("faux", func() (core.Provider, error) {
 		return faux.New(), nil
+	})
+	l.RegisterFactory("groq", func() (core.Provider, error) {
+		return groq.NewProvider()
+	})
+	l.RegisterFactory("together", func() (core.Provider, error) {
+		return together.NewProvider()
 	})
 	return l
 }

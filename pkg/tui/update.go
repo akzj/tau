@@ -378,3 +378,53 @@ func truncate(s string, maxLen int) string {
 	}
 	return s[:maxLen-1] + "…"
 }
+// ── Event subscription bridge ─────────────────────────────────────────
+
+// EventSubscriber bridges agent events into the TUI update cycle via a channel.
+type EventSubscriber struct {
+	agentChan chan interface{}
+}
+
+// NewEventSubscriber creates a subscriber with a buffered channel.
+func NewEventSubscriber() *EventSubscriber {
+	return &EventSubscriber{agentChan: make(chan interface{}, 64)}
+}
+
+// Chan returns the internal channel for use with listenEvents.
+func (es *EventSubscriber) Chan() chan interface{} {
+	return es.agentChan
+}
+
+// Send pushes an event into the subscriber channel (non-blocking).
+func (es *EventSubscriber) Send(ev interface{}) {
+	select {
+	case es.agentChan <- ev:
+	default:
+		// drop if channel is full (best-effort UI bridge)
+	}
+}
+
+// ── Event types for UI consumption ────────────────────────────────────
+
+// MessageEvent carries a complete message for the conversation panel.
+type MessageEvent struct {
+	Role    string
+	Content string
+}
+
+// ToolCallEvent signals a tool invocation or result.
+type ToolCallEvent struct {
+	Tool string
+	Args string
+}
+
+// ReasoningEvent carries chain-of-thought steps.
+type ReasoningEvent struct {
+	Steps []string
+}
+
+// CacheEvent signals a cache hit or miss.
+type CacheEvent struct {
+	Hit bool
+	Key string
+}

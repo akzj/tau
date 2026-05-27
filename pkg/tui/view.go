@@ -9,25 +9,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Color theme — dark terminal palette.
-var (
-	userStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#4fc3f7")).Bold(true)
-	assistantStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#81c784"))
-	toolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#a5d6a7")).Faint(true)
-	systemStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#90a4ae")).Italic(true)
-	thinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Italic(true)
-	errorStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef5350"))
-	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#78909c")).Background(lipgloss.Color("#263238"))
-	streamingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#81c784")).Faint(true)
-
-	// Syntax highlighting styles.
-	keywordStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#4fc3f7")).Bold(true)
-	stringStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#a5d6a7"))
-	commentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#616161")).Italic(true)
-	numberStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffcc80"))
-	typeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#82b1ff"))
-)
-
 // View implements tea.Model.
 func (m *model) View() string {
 	// Delegate to session browser when active.

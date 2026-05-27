@@ -1,14 +1,14 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
+	"os"
+	"sync"
 	"time"
 )
 
-// Type is the sandbox backend.
+// Type is the sandbox backend type.
 type Type string
 
 const (
@@ -17,109 +17,77 @@ const (
 	None   Type = "none"
 )
 
-// Result captures the output of a sandboxed command.
+// Result holds sandbox execution output.
 type Result struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout    string `json:"stdout"`
+	Stderr    string `json:"stderr"`
+	ExitCode  int    `json:"exit_code"`
+	Duration  string `json:"duration"`
+	Sandboxed bool   `json:"sandboxed"`
+	Error     string `json:"error,omitempty"`
+}
+
+// Backend defines the sandbox execution backend.
+type Backend interface {
+	Run(ctx context.Context, cmd string, workDir string, timeout time.Duration) (*Result, error)
+	Available() bool
+	Name() string
 }
 
 // Runner executes commands in a sandboxed environment.
-type Runner interface {
-	Run(ctx context.Context, cmdStr string, workDir string, timeout time.Duration) (Result, error)
-	Backend() Type
+type Runner struct {
+	backend Backend
+	timeout time.Duration
+	mu      sync.Mutex
 }
 
-// Detect returns the best available sandbox runner.
-// Falls back to PathJail if container is unavailable.
-func Detect(preferred Type, workspaceRoot string) Runner {
-	if preferred == None {
-		return &PathJail{root: workspaceRoot}
+// NewRunner creates a sandbox runner with the best available backend.
+// Tries Docker first; falls back to local execution with a warning.
+func NewRunner() *Runner {
+	r := &Runner{timeout: 300 * time.Second}
+	docker := NewDockerBackend()
+	if docker.Available() {
+		r.backend = docker
+	} else {
+		r.backend = NewLocalBackend()
+		fmt.Fprintf(os.Stderr, "[sandbox] Docker not available — using local fallback\n")
 	}
-	bin := string(preferred)
-	if _, err := exec.LookPath(bin); err == nil {
-		return &containerRunner{bin: bin, root: workspaceRoot}
-	}
-	// Try the other
-	other := "docker"
-	if preferred == Docker {
-		other = "podman"
-	}
-	if _, err := exec.LookPath(other); err == nil {
-		return &containerRunner{bin: other, root: workspaceRoot}
-	}
-	// Fallback
-	return &PathJail{root: workspaceRoot}
+	return r
 }
 
-// containerRunner runs commands inside a Docker/Podman container.
-type containerRunner struct {
-	bin  string
-	root string
+// Run executes a command in the sandbox.
+func (r *Runner) Run(ctx context.Context, cmd string, workDir string) (*Result, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.timeout)
+		defer cancel()
+	}
+
+	start := time.Now()
+	result, err := r.backend.Run(ctx, cmd, workDir, r.timeout)
+	if result != nil {
+		result.Duration = time.Since(start).String()
+	}
+	return result, err
 }
 
-func (c *containerRunner) Backend() Type {
-	if c.bin == "podman" {
-		return Podman
-	}
-	return Docker
+// SetTimeout overrides the default timeout for subsequent runs.
+func (r *Runner) SetTimeout(d time.Duration) {
+	r.timeout = d
 }
 
-func (c *containerRunner) Run(ctx context.Context, cmdStr string, workDir string, timeout time.Duration) (Result, error) {
-	containerWorkDir := "/workspace"
-	if workDir != "" && workDir != c.root {
-		// Map workDir relative to root
-		containerWorkDir = "/workspace/" + relPath(workDir, c.root)
+// Backend returns the current backend name (docker, podman, local, or none).
+func (r *Runner) Backend() string {
+	if r.backend == nil {
+		return "none"
 	}
-
-	args := []string{
-		"run", "--rm", "-i",
-		"--network", "none",
-		"--memory", "512m",
-		"--cpus", "1",
-		"-v", c.root + ":/workspace:rw",
-		"-w", containerWorkDir,
-		"alpine:latest",
-		"sh", "-c", cmdStr,
-	}
-
-	cmd := exec.CommandContext(ctx, c.bin, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	result := Result{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: 0,
-	}
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitErr.ExitCode()
-		} else {
-			result.ExitCode = -1
-		}
-	}
-	return result, nil
+	return r.backend.Name()
 }
 
-func relPath(path, root string) string {
-	if len(path) > len(root) && path[:len(root)] == root {
-		return path[len(root):]
-	}
-	return path
-}
-
-// PathJail is the fallback: no container, just path restrictions (existing behavior).
-type PathJail struct {
-	root string
-}
-
-func (p *PathJail) Backend() Type { return None }
-
-func (p *PathJail) Run(ctx context.Context, cmdStr string, workDir string, timeout time.Duration) (Result, error) {
-	// This mirrors the existing bash.go behavior — exec with path jail.
-	// Return "not implemented" since the tool layer already does path jail.
-	return Result{}, fmt.Errorf("path-jail sandbox: use direct bash execution (no container)")
+// Stop performs any necessary cleanup (no-op for current backends).
+func (r *Runner) Stop() error {
+	return nil
 }

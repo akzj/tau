@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/akzj/tau/core"
-	"github.com/akzj/tau/pkg/sandbox"
 )
 
 // VerifyTool creates a code verification tool.
@@ -68,8 +67,8 @@ func VerifyTool() core.Tool {
 			exitCode := -1
 			sandboxed := false
 
-			if SandboxRunner != nil && SandboxRunner.Backend() != sandbox.None {
-				result, err := SandboxRunner.Run(ctx, args.Command, workDir, time.Duration(args.TimeoutSeconds)*time.Second)
+			if SandboxRunner != nil && SandboxRunner.Backend() != "local" && SandboxRunner.Backend() != "none" {
+				result, err := SandboxRunner.Run(ctx, args.Command, workDir)
 				if err == nil {
 					stdout.WriteString(result.Stdout)
 					stderr.WriteString(result.Stderr)

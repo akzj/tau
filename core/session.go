@@ -103,7 +103,7 @@ func NewSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	s.Conversation = NewConversation(s.MaxTokens, s.CtxStrategy)
 	s.CreatedAt = time.Now()
 	if opts.MemoryDir != "" {
-		s.Memory = NewMemorySystem(opts.MemoryDir, opts.MemoryDir)
+		s.Memory = NewMemorySystem(opts.MemoryDir, opts.MemoryDir, nil)
 	}
 	if s.Strategy == nil {
 		s.Strategy = NewReActStrategy()

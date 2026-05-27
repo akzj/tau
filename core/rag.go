@@ -2,6 +2,8 @@ package core
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -283,4 +285,82 @@ func generateSnippet(content, query string, maxLen int) string {
 }
 
 // ensure unicode is used (imported for future use)
+
+// --- VectorRAGPipeline ---
+
+// VectorRAGPipeline combines embedding + vector store for semantic document retrieval.
+type VectorRAGPipeline struct {
+	embedder Embedder
+	store    VectorStore
+	topK     int
+}
+
+// NewVectorRAGPipeline creates a vector-based RAG pipeline.
+// topK controls the number of documents retrieved per query.
+func NewVectorRAGPipeline(embedder Embedder, store VectorStore, topK int) *VectorRAGPipeline {
+	if topK <= 0 {
+		topK = 5
+	}
+	return &VectorRAGPipeline{embedder: embedder, store: store, topK: topK}
+}
+
+// Index indexes a set of document chunks by computing embeddings and inserting
+// them into the vector store. Returns the number of successfully indexed chunks.
+func (p *VectorRAGPipeline) Index(ctx context.Context, chunks []DocumentChunk) (int, error) {
+	count := 0
+	for _, chunk := range chunks {
+		emb, err := p.embedder.Embed(ctx, chunk.Content)
+		if err != nil {
+			continue
+		}
+		err = p.store.Insert(VectorEntry{
+			ID:        chunk.ID,
+			Text:      truncateStr(chunk.Content, 200),
+			Chunk:     chunk.Path,
+			Embedding: emb,
+		})
+		if err == nil {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// Search finds the top-K most relevant documents for a query.
+func (p *VectorRAGPipeline) Search(ctx context.Context, query string) ([]VectorEntry, error) {
+	emb, err := p.embedder.Embed(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return p.store.Search(emb, p.topK)
+}
+
+// GenerateContext builds a Markdown context string from search results
+// suitable for injection into an agent's system prompt.
+func (p *VectorRAGPipeline) GenerateContext(results []VectorEntry) string {
+	if len(results) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Retrieved Documents\n\n")
+	for i, r := range results {
+		fmt.Fprintf(&b, "### %d. %s\n", i+1, r.Chunk)
+		b.WriteString(r.Text)
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+// Stats returns RAG pipeline statistics.
+func (p *VectorRAGPipeline) Stats() map[string]int {
+	return map[string]int{
+		"documents": p.store.Count(),
+		"top_k":     p.topK,
+	}
+}
+
+// Embedder returns the pipeline's embedder (for external diagnostic use).
+func (p *VectorRAGPipeline) Embedder() Embedder {
+	return p.embedder
+}
 var _ = unicode.ToLower

@@ -38,7 +38,7 @@ func TestWorkingMemorySummarize(t *testing.T) {
 
 func TestEpisodicMemoryRecordAndRecall(t *testing.T) {
 	dir := t.TempDir()
-	em := NewEpisodicMemory(dir, 100)
+	em := NewEpisodicMemory(dir, 100, nil)
 	em.Record(Episode{Trigger: "error", Action: "fix", Outcome: "resolved", Lesson: "check nil", Tags: []string{"bug"}})
 	results := em.Recall("error", 5)
 	if len(results) != 1 {
@@ -48,7 +48,7 @@ func TestEpisodicMemoryRecordAndRecall(t *testing.T) {
 
 func TestEpisodicMemoryLimit(t *testing.T) {
 	dir := t.TempDir()
-	em := NewEpisodicMemory(dir, 5)
+	em := NewEpisodicMemory(dir, 5, nil)
 	for i := 0; i < 10; i++ {
 		em.Record(Episode{Trigger: fmt.Sprintf("task-%d", i), Action: "done", Outcome: "ok", Tags: []string{}})
 	}
@@ -59,7 +59,7 @@ func TestEpisodicMemoryLimit(t *testing.T) {
 
 func TestEpisodicMemoryForget(t *testing.T) {
 	dir := t.TempDir()
-	em := NewEpisodicMemory(dir, 100)
+	em := NewEpisodicMemory(dir, 100, nil)
 	em.Record(Episode{Trigger: "old-task", Action: "done", Outcome: "ok", Tags: []string{}})
 	// Override timestamp to be old
 	em.mu.Lock()
@@ -73,7 +73,7 @@ func TestEpisodicMemoryForget(t *testing.T) {
 
 func TestEpisodicMemoryByTag(t *testing.T) {
 	dir := t.TempDir()
-	em := NewEpisodicMemory(dir, 100)
+	em := NewEpisodicMemory(dir, 100, nil)
 	em.Record(Episode{Trigger: "t1", Action: "a1", Outcome: "o1", Tags: []string{"go", "bug"}})
 	em.Record(Episode{Trigger: "t2", Action: "a2", Outcome: "o2", Tags: []string{"python", "feature"}})
 	results := em.ListByTag("go")
@@ -84,7 +84,7 @@ func TestEpisodicMemoryByTag(t *testing.T) {
 
 func TestMemorySystemIntegration(t *testing.T) {
 	dir := t.TempDir()
-	ms := NewMemorySystem("", dir)
+	ms := NewMemorySystem("", dir, nil)
 	ms.AddObservation("loop:turn", "completed task", 0.8)
 	ms.RecordEpisode("task-start", "run build", "success", "remember to check deps", []string{"build"})
 

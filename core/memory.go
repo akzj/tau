@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -131,15 +132,68 @@ type EpisodicMemory struct {
 	episodes    []Episode
 	dir         string
 	maxEpisodes int
+	store       StorageBackend // SQLite backend (nil = JSON fallback or in-memory)
+	lru         *lruCache      // hot item cache for fast recall
+}
+
+// lruCache is a simple LRU cache for episodes.
+type lruCache struct {
+	items map[string]*Episode
+	order []string
+	max   int
+}
+
+func (c *lruCache) update(ep *Episode) {
+	if c == nil {
+		return
+	}
+	// Remove existing entry for this key
+	for i, id := range c.order {
+		if id == ep.ID {
+			c.order = append(c.order[:i], c.order[i+1:]...)
+			break
+		}
+	}
+	// Evict oldest if at capacity
+	if len(c.order) >= c.max {
+		oldest := c.order[0]
+		delete(c.items, oldest)
+		c.order = c.order[1:]
+	}
+	c.order = append(c.order, ep.ID)
+	c.items[ep.ID] = ep
+}
+
+func (c *lruCache) get(id string) *Episode {
+	if c == nil {
+		return nil
+	}
+	return c.items[id]
 }
 
 // NewEpisodicMemory creates an episodic memory store.
-func NewEpisodicMemory(dir string, maxEpisodes int) *EpisodicMemory {
+// If store is non-nil, episodes are persisted to SQLite.
+// If store is nil and dir is non-empty, episodes use JSON file persistence.
+// If both are nil/empty, episodes are in-memory only.
+func NewEpisodicMemory(dir string, maxEpisodes int, store StorageBackend) *EpisodicMemory {
 	if maxEpisodes <= 0 {
 		maxEpisodes = 1000
 	}
-	em := &EpisodicMemory{dir: dir, maxEpisodes: maxEpisodes}
-	em.load()
+	em := &EpisodicMemory{
+		dir:         dir,
+		maxEpisodes: maxEpisodes,
+		store:       store,
+		lru:         &lruCache{items: make(map[string]*Episode), max: 100, order: make([]string, 0, 100)},
+	}
+	// Load episodes from store or JSON
+	if store != nil {
+		eps, err := store.LoadEpisodes()
+		if err == nil && len(eps) > 0 {
+			em.episodes = eps
+		}
+	} else {
+		em.load()
+	}
 	return em
 }
 
@@ -153,7 +207,14 @@ func (em *EpisodicMemory) Record(ep Episode) {
 	if len(em.episodes) > em.maxEpisodes {
 		em.episodes = em.episodes[1:]
 	}
-	em.save()
+	// Persist
+	if em.store != nil {
+		em.store.SaveEpisode(ep)
+	} else {
+		em.save()
+	}
+	// Update LRU cache
+	em.lru.update(&ep)
 }
 
 // Recall searches episodes by trigger/action/outcome/tags.
@@ -265,19 +326,24 @@ func containsTag(tags []string, query string) bool {
 
 // --- Memory System (unified) ---
 
-// MemorySystem bundles all three memory layers.
+// MemorySystem bundles all memory layers.
 type MemorySystem struct {
-	Working  *WorkingMemory
-	Episodic *EpisodicMemory
-	Semantic *RAGIndex
+	Working   *WorkingMemory
+	Episodic  *EpisodicMemory
+	Semantic  *RAGIndex           // TF-IDF code search (existing)
+	SemMem    *SemanticMemory     // knowledge facts
+	Extractor KnowledgeExtractor  // async fact extraction
 }
 
 // NewMemorySystem creates the full memory system.
-func NewMemorySystem(ragDir, episodicDir string) *MemorySystem {
+// store may be nil for in-memory-only mode.
+func NewMemorySystem(ragDir, episodicDir string, store StorageBackend) *MemorySystem {
 	return &MemorySystem{
-		Working:  NewWorkingMemory(100),
-		Episodic: NewEpisodicMemory(episodicDir, 1000),
-		Semantic: NewRAGIndex(),
+		Working:   NewWorkingMemory(100),
+		Episodic:  NewEpisodicMemory(episodicDir, 1000, store),
+		Semantic:  NewRAGIndex(),
+		SemMem:    NewSemanticMemory(store),
+		Extractor: &SimpleExtractor{},
 	}
 }
 
@@ -286,9 +352,25 @@ func (ms *MemorySystem) AddObservation(source, content string, importance float6
 	ms.Working.Add(Observation{Source: source, Content: content, Importance: importance})
 }
 
-// RecordEpisode records a completed action.
+// RecordEpisode records a completed action and triggers async knowledge extraction.
 func (ms *MemorySystem) RecordEpisode(trigger, action, outcome, lesson string, tags []string) {
-	ms.Episodic.Record(Episode{Trigger: trigger, Action: action, Outcome: outcome, Lesson: lesson, Tags: tags})
+	ep := Episode{Trigger: trigger, Action: action, Outcome: outcome, Lesson: lesson, Tags: tags}
+	ms.Episodic.Record(ep)
+
+	// Async knowledge extraction
+	if ms.Extractor != nil && ms.SemMem != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			facts, err := ms.Extractor.Extract(ctx, ep)
+			if err == nil {
+				for _, f := range facts {
+					ms.SemMem.Add(f)
+				}
+				fmt.Fprintf(os.Stderr, "[semantic] extracted %d facts from episode %s\n", len(facts), ep.ID)
+			}
+		}()
+	}
 }
 
 // RecallEpisodes searches episodic memory.
@@ -299,6 +381,14 @@ func (ms *MemorySystem) RecallEpisodes(query string, limit int) []Episode {
 // SemanticRecall uses TF-IDF for semantic search over indexed documents.
 func (ms *MemorySystem) SemanticRecall(query string, topK int) []SearchResult {
 	return ms.Semantic.Search(query, topK)
+}
+
+// SemanticQuery searches extracted knowledge facts.
+func (ms *MemorySystem) SemanticQuery(query string, limit int) []SemanticFact {
+	if ms.SemMem == nil {
+		return nil
+	}
+	return ms.SemMem.Query(query, limit)
 }
 
 // Ensure imports used

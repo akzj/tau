@@ -17,38 +17,39 @@ import (
 // WebFetchTool creates a web page fetching tool.
 //
 // Parameters:
-//   url       (string, required) — the URL to fetch (http/https only)
-//   max_bytes (int, optional, default 1MB) — maximum bytes to download
 //
-// Strips HTML tags and returns plain text content. 10-second timeout.
+//	url       (string, required) — the URL to fetch (http/https only)
+//	max_chars (int, optional, default 5000) — maximum chars to return
+//
+// Strips HTML tags and returns plain text content with title. 10-second timeout.
 // User-Agent: tau/0.1. Only http/https schemes are allowed.
 func WebFetchTool() core.Tool {
 	schema := json.RawMessage(`{
 		"type": "object",
 		"properties": {
 			"url": {"type": "string", "description": "URL to fetch"},
-			"max_bytes": {"type": "integer", "description": "Max bytes to read (default 1MB)"}
+			"max_chars": {"type": "integer", "description": "Max chars to return (default 5000)"}
 		},
 		"required": ["url"]
 	}`)
 
 	return core.Tool{
 		Name:        "web_fetch",
-		Description: "Fetch a web page and return its text content. Strips HTML. Max 1MB, 10s timeout.",
+		Description: "Fetch a web page and return its text content with title. Strips HTML. 10s timeout.",
 		Schema:      Schema{Raw: schema},
 		Mode:        core.ModeSequential,
 		Execute: func(ctx context.Context, callID string, params any, onUpdate func(core.PartialResult)) (core.ToolResult, error) {
 			var args struct {
 				URL      string `json:"url"`
-				MaxBytes int    `json:"max_bytes"`
+				MaxChars int    `json:"max_chars"`
 			}
 			raw, _ := json.Marshal(params)
 			json.Unmarshal(raw, &args)
 			if args.URL == "" {
 				return core.ToolResult{}, fmt.Errorf("url required")
 			}
-			if args.MaxBytes <= 0 {
-				args.MaxBytes = 1024 * 1024
+			if args.MaxChars <= 0 {
+				args.MaxChars = 5000
 			}
 
 			// Validate URL scheme
@@ -73,15 +74,23 @@ func WebFetchTool() core.Tool {
 			}
 			defer resp.Body.Close()
 
-			body, err := io.ReadAll(io.LimitReader(resp.Body, int64(args.MaxBytes)))
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 			if err != nil {
 				return core.ToolResult{}, err
 			}
 
+			htmlStr := string(body)
+			title := getHTMLTitle(htmlStr)
+
 			// Simple HTML to text: strip tags
-			text := stripHTML(string(body))
-			if len(text) > 4000 {
-				text = text[:4000] + "\n... (truncated)"
+			text := stripHTML(htmlStr)
+			if len(text) > args.MaxChars {
+				text = text[:args.MaxChars] + "\n... (truncated)"
+			}
+
+			// Prepend title if found
+			if title != "" {
+				text = "Title: " + title + "\n\n" + text
 			}
 
 			return core.ToolResult{
@@ -99,6 +108,7 @@ func WebFetchTool() core.Tool {
 
 var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 var multiSpaceRe = regexp.MustCompile(`\s+`)
+var titleRe = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
 func stripHTML(s string) string {
 	s = htmlTagRe.ReplaceAllString(s, " ")
@@ -108,4 +118,12 @@ func stripHTML(s string) string {
 	s = strings.ReplaceAll(s, "&quot;", "\"")
 	s = multiSpaceRe.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
+}
+
+func getHTMLTitle(html string) string {
+	m := titleRe.FindStringSubmatch(html)
+	if len(m) >= 2 {
+		return strings.TrimSpace(stripHTML(m[1]))
+	}
+	return ""
 }

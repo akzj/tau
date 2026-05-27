@@ -6,6 +6,7 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -219,4 +220,80 @@ func (m *model) bridgeStreamUI() {
 			m.agentChan <- turnCompleteMsg{err: ev.Err}
 		}
 	}
+}
+// ── AppModel — composite Bubble Tea model ─────────────────────────────
+
+// AppModel composes ConversationPanel, InputPanel, StatusBar, and
+// EventSubscriber into a single Bubble Tea application model.
+type AppModel struct {
+	conversation *ConversationPanel
+	input        *InputPanel
+	status       *StatusBar
+	browser      *sessionBrowser
+	subscriber   *EventSubscriber
+	width        int
+	height       int
+}
+
+// NewAppModel creates a composite AppModel with all panels wired.
+func NewAppModel(toolNames []string) *AppModel {
+	return &AppModel{
+		conversation: NewConversationPanel(),
+		input:        NewInputPanel(toolNames),
+		status:       NewStatusBar(),
+		subscriber:   NewEventSubscriber(),
+	}
+}
+
+// Init implements tea.Model.
+func (m *AppModel) Init() tea.Cmd {
+	return listenEvents(m.subscriber.Chan())
+}
+
+// Update implements tea.Model.
+func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.conversation.Update(msg)
+
+	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		m.input.Update(msg)
+		if msg.String() == "ctrl+d" {
+			text := m.input.Submit()
+			if text != "" {
+				m.conversation.AddMessage(Message{Role: "user", Content: text})
+				m.status.SetStatus("thinking")
+			}
+		}
+
+	case MessageEvent:
+		m.conversation.AddMessage(Message{Role: msg.Role, Content: msg.Content})
+
+	case ToolCallEvent:
+		m.status.SetTools(m.status.activeTools + 1)
+
+	case CacheEvent:
+		if msg.Hit {
+			m.status.cacheHits++
+		} else {
+			m.status.cacheMisses++
+		}
+	}
+
+	return m, nil
+}
+
+// View implements tea.Model.
+func (m *AppModel) View() string {
+	conv := m.conversation.View()
+	input := m.input.View()
+	status := m.status.View()
+
+	// Fill conversation area to push input + status to bottom.
+	return fmt.Sprintf("%s\n%s\n%s", conv, input, status)
 }

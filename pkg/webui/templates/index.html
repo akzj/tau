@@ -63,7 +63,11 @@ body { font:14px/1.6 system-ui,-apple-system,sans-serif; background:var(--bg); c
 /* Assistant */
 .msg-assistant .msg-bubble { background:var(--msg-assistant); color:var(--text); max-width:85%; }
 .msg-assistant.streaming .msg-bubble { opacity:0.85; }
-.streaming-cursor { color:#3fb950; animation:pulse 1s infinite; }
+.streaming-cursor { color:#3fb950; animation:blink 0.5s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.reasoning { color: #ce93d8; font-style: italic; }
+.cache     { color: #4dd0e1; }
+.tool-ref  { color: #ffd54f; font-weight: bold; }
 
 /* Tool */
 .msg-tool .msg-bubble { background:var(--msg-tool); color:#7ee787; font-size:12px; cursor:pointer; }
@@ -129,6 +133,7 @@ body { font:14px/1.6 system-ui,-apple-system,sans-serif; background:var(--bg); c
   <span class="logo">τ tau</span>
   <button id="file-tree-toggle" onclick="toggleFileTree()">📁 Files</button>
   <button onclick="newSession()">+ New</button>
+  <select id="session-select" onchange="switchSession(this.value)" style="background:var(--msg-system);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;max-width:160px;"><option value="">new session</option></select>
   <span id="status">idle</span>
 </div>
 
